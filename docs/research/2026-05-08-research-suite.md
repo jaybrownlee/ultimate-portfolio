@@ -45,6 +45,6 @@ This is actual-current-holdings evidence using the live ETF/equity tickers. Beca
 
 | Method | Median | P5 | P95 | Probability of Loss | Median Max Drawdown |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| bootstrap | $137,235.56 | $116,737.91 | $162,773.09 | 0.20% | -5.31% |
-| block_bootstrap | $138,046.94 | $118,275.68 | $156,636.71 | 0.10% | -4.67% |
-| student_t | $137,186.50 | $115,289.45 | $166,788.78 | 0.20% | -5.35% |
+| bootstrap | $137,183.42 | $115,629.75 | $162,967.60 | 0.20% | -5.35% |
+| block_bootstrap | $138,297.27 | $119,133.34 | $156,694.77 | 0.10% | -4.67% |
+| student_t | $137,087.09 | $115,628.39 | $165,865.98 | 0.15% | -5.26% |

@@ -413,6 +413,7 @@ def run_research_suite(args: argparse.Namespace) -> int:
     )
     suite = {
         "backtest": backtest,
+        "proxy_map": proxy_map,
         "rebalance_comparisons": comparisons,
         "contribution": contribution,
         "rolling_63": rolling_63,
@@ -1278,6 +1279,7 @@ def print_latest_rolling(label: str, rows: Any) -> None:
 def format_research_suite_markdown(suite: dict[str, Any]) -> str:
     backtest = suite["backtest"]
     metrics = backtest.portfolio_metrics
+    context_lines = research_suite_context_lines(backtest.mode, suite.get("proxy_map", {}))
     lines = [
         "# Research Suite",
         "",
@@ -1286,6 +1288,7 @@ def format_research_suite_markdown(suite: dict[str, Any]) -> str:
         f"Return periods: {metrics.periods}",
         f"Rebalance: {backtest.rebalance_frequency}",
         "",
+        *context_lines,
         "## Portfolio Metrics",
         "",
         "| Metric | Result |",
@@ -1343,6 +1346,25 @@ def format_research_suite_markdown(suite: dict[str, Any]) -> str:
         )
     lines.append("")
     return "\n".join(lines)
+
+
+def research_suite_context_lines(mode: str, proxy_map: dict[str, str]) -> list[str]:
+    if mode == "proxy_regime":
+        lines = ["Proxy map used:", ""]
+        for target, proxy in sorted(proxy_map.items()):
+            lines.append(f"- {target.upper()} = {proxy.upper()}")
+        lines.extend([
+            "",
+            "This is proxy-regime research, not actual-current-holdings evidence. It extends the regime sample by substituting older liquid instruments for funds with limited live history.",
+            "",
+        ])
+        return lines
+    if mode == "actual_current_portfolio":
+        return [
+            "This is actual-current-holdings evidence using the live ETF/equity tickers. Because BAI and ELFY have limited live history, this report should be read as a short-window diagnostic rather than a full-cycle estimate.",
+            "",
+        ]
+    return []
 
 
 def rolling_markdown_line(label: str, rows: Any) -> str:

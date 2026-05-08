@@ -50,6 +50,6 @@ This is proxy-regime research, not actual-current-holdings evidence. It extends 
 
 | Method | Median | P5 | P95 | Probability of Loss | Median Max Drawdown |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| bootstrap | $110,217.82 | $90,449.42 | $135,367.13 | 22.90% | -9.43% |
-| block_bootstrap | $110,472.88 | $91,860.79 | $131,368.65 | 19.20% | -9.62% |
-| student_t | $110,441.24 | $90,846.38 | $137,526.41 | 18.90% | -9.33% |
+| bootstrap | $110,786.21 | $90,164.30 | $135,367.13 | 21.05% | -9.38% |
+| block_bootstrap | $111,113.17 | $91,914.00 | $132,046.31 | 17.40% | -9.63% |
+| student_t | $110,346.60 | $91,151.63 | $136,677.49 | 19.85% | -9.29% |

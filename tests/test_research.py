@@ -1,6 +1,7 @@
 from datetime import date
 import unittest
 
+from ultimate_portfolio.cli import research_suite_context_lines
 from ultimate_portfolio.data import normalize_tickers, unix_timestamp
 from ultimate_portfolio.research import (
     HistoricalMonteCarloAssumptions,
@@ -162,6 +163,15 @@ class ResearchTests(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertEqual(first.method, "block_bootstrap")
+
+    def test_research_suite_context_documents_evidence_mode(self) -> None:
+        actual_lines = research_suite_context_lines("actual_current_portfolio", {})
+        proxy_lines = research_suite_context_lines("proxy_regime", {"BAI": "QQQ", "ELFY": "GRID"})
+
+        self.assertTrue(any("actual-current-holdings" in line for line in actual_lines))
+        self.assertIn("- BAI = QQQ", proxy_lines)
+        self.assertIn("- ELFY = GRID", proxy_lines)
+        self.assertTrue(any("proxy-regime research" in line for line in proxy_lines))
 
 
 def strategy_price_points() -> list[PricePoint]:
