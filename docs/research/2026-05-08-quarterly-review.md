@@ -59,6 +59,7 @@ Recommended action: Watch list: document the issue, avoid discretionary trades, 
 | pass | VFLO | COWZ | fcf_value_anchor | +2.54% | 0.17 | +0.72% | Same-role replacement test; review liquidity, taxes, and thesis fit before acting. |
 | reject | CALF | COWZ | fcf_value_anchor | -1.67% | -0.16 | -2.80% | Same-role replacement test; review liquidity, taxes, and thesis fit before acting. |
 | watch | DSTL | COWZ | fcf_value_anchor | -0.38% | -0.02 | +0.66% | Same-role replacement test; review liquidity, taxes, and thesis fit before acting. |
+| pass | SCHD | COWZ | dividend_quality_core | -0.39% | 0.01 | +1.69% | Same-role replacement test; review liquidity, taxes, and thesis fit before acting. |
 | pass | CAT | DE | ai_adopter | +0.98% | 0.06 | -0.60% | Same-role replacement test; review liquidity, taxes, and thesis fit before acting. |
 | watch | HON | DE | ai_adopter | -0.46% | -0.03 | +0.04% | Same-role replacement test; review liquidity, taxes, and thesis fit before acting. |
 | pass | ETN | DE | ai_adopter | +0.37% | 0.02 | -0.54% | Same-role replacement test; review liquidity, taxes, and thesis fit before acting. |
@@ -77,7 +78,7 @@ Recommended action: Watch list: document the issue, avoid discretionary trades, 
 | reject | BOTZ | ARKQ | robotics_embodied_ai | -0.60% | -0.03 | -0.03% | Same-role replacement test; review liquidity, taxes, and thesis fit before acting. |
 | watch | ROBO | ARKQ | robotics_embodied_ai | -0.53% | -0.02 | +0.11% | Same-role replacement test; review liquidity, taxes, and thesis fit before acting. |
 | pass | IRBO | ARKQ | robotics_embodied_ai | -0.08% | 0.00 | -0.32% | Same-role replacement test; review liquidity, taxes, and thesis fit before acting. |
-| reject | GRID | ELFY | power_grid_cooling | -0.00% | -0.00 | -0.00% | Same-role replacement test; review liquidity, taxes, and thesis fit before acting. |
+| pass | GRID | ELFY | power_grid_cooling | +0.00% | 0.00 | +0.00% | Same-role replacement test; review liquidity, taxes, and thesis fit before acting. |
 | pass | PAVE | ELFY | power_grid_cooling | +0.05% | 0.00 | -0.07% | Same-role replacement test; review liquidity, taxes, and thesis fit before acting. |
 | watch | IFRA | ELFY | power_grid_cooling | -0.08% | -0.00 | +0.12% | Same-role replacement test; review liquidity, taxes, and thesis fit before acting. |
 | pass | AIRR | ELFY | power_grid_cooling | +0.30% | 0.02 | -0.06% | Same-role replacement test; review liquidity, taxes, and thesis fit before acting. |

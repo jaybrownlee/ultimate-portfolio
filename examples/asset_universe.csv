@@ -3,6 +3,7 @@ COWZ,fcf_value_anchor,core,,0.20,0.35,Current free-cash-flow equity anchor
 VFLO,fcf_value_anchor,core,COWZ,0,0.28,Free-cash-flow/value alternative
 CALF,fcf_value_anchor,core,COWZ,0,0.28,Small-cap cash-flow alternative; higher volatility
 DSTL,fcf_value_anchor,core,COWZ,0,0.28,Distilled value/quality alternative
+SCHD,dividend_quality_core,core,COWZ,0,0.28,Dividend-quality candidate; adjacent role rather than pure free-cash-flow substitute
 WMT,ai_adopter,core,,0.00,0.05,Current AI adopter
 JPM,ai_adopter,core,,0.00,0.05,Current AI adopter
 DE,ai_adopter,core,,0.00,0.05,Current AI adopter

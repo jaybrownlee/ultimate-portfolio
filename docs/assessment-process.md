@@ -88,6 +88,32 @@ Candidate tests classify each replacement:
 
 These are research classifications, not trade orders.
 
+## Core Equity Sleeve Review
+
+COWZ is the default core equity anchor because the portfolio is trying to own cash-generative, valuation-aware companies rather than the most exciting growth stories. The role is anti-hype equity exposure, not income maximization.
+
+SCHD should stay in the research universe, but it should be treated as a dividend-quality candidate rather than a pure free-cash-flow substitute. Its evidence threshold should answer whether dividend quality improves the core sleeve's total-portfolio behavior versus the current free-cash-flow anchor.
+
+Quarterly reviews should test:
+
+- COWZ-only core equity anchor
+- SCHD replacing COWZ
+- other free-cash-flow/value candidates such as VFLO and DSTL
+- broad value or quality alternatives when data is available
+
+Useful evidence includes:
+
+- performance during tech multiple compression
+- correlation and beta versus QQQ and the benchmark blend
+- Sharpe, Sortino, max drawdown, worst month, and CVaR
+- contribution during equity drawdowns
+- whether dividend quality reduces drawdown without sacrificing too much cash-flow-value exposure
+
+Decision rule:
+
+- Keep COWZ as the default unless a candidate improves portfolio-level risk-adjusted performance while preserving the anti-hype core equity role.
+- Treat SCHD as a credible adjacent-role candidate, not an automatic replacement, because dividend policy and free-cash-flow yield are related but not identical.
+
 ## Managed Futures Sleeve Review
 
 DBMF is the default managed-futures holding because its role is to provide broad trend-following hedge exposure inside the defensive core. CTA is not excluded from the strategy. It should be evaluated as a potential diversifier or partial replacement inside the managed-futures sleeve.
