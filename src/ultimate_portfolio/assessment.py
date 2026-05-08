@@ -133,7 +133,20 @@ class CandidateScreenRow:
     cagr_delta: float | None
     sharpe_delta: float | None
     max_drawdown_delta: float | None
+    reason_codes: tuple[str, ...]
     notes: str
+
+
+@dataclass(frozen=True)
+class CandidateRoleSummary:
+    role: str
+    bucket: str
+    incumbents: tuple[str, ...]
+    incumbent_priority: str
+    best_challenger: str | None
+    best_challenger_priority: str | None
+    recommended_action: str
+    reason_codes: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -141,6 +154,7 @@ class CandidateScreenReport:
     as_of: date | None
     benchmark_symbol: str
     windows: tuple[int, ...]
+    summaries: tuple[CandidateRoleSummary, ...]
     rows: tuple[CandidateScreenRow, ...]
 
 
@@ -645,6 +659,7 @@ def run_candidate_screen(
         as_of=max(latest_dates) if latest_dates else None,
         benchmark_symbol=normalized_benchmark,
         windows=tuple(windows),
+        summaries=build_role_summaries(rows),
         rows=rows,
     )
 
@@ -691,12 +706,27 @@ def build_candidate_screen_row(
     above_200 = above_moving_average(values, 200)
     incumbent_corr = paired_return_correlation(price_table, symbol, item.replacement_symbol)
     benchmark_relative = paired_relative_metrics(price_table, symbol, benchmark_symbol, annualization_periods)
+    benchmark_corr = None if benchmark_relative is None else benchmark_relative.correlation
+    benchmark_beta = None if benchmark_relative is None else benchmark_relative.beta
+    reason_codes = screen_reason_codes(
+        candidate_type=candidate_type,
+        role=item.role,
+        replacement_result=replacement_result,
+        return_126=window_returns.get(126),
+        above_200=above_200,
+        current_drawdown=current_drawdown,
+        correlation_to_incumbent=incumbent_corr,
+        beta_to_benchmark=benchmark_beta,
+    )
     priority = classify_screen_priority(
+        role=item.role,
         candidate_type=candidate_type,
         replacement_result=replacement_result,
         return_126=window_returns.get(126),
         above_200=above_200,
         current_drawdown=current_drawdown,
+        correlation_to_incumbent=incumbent_corr,
+        beta_to_benchmark=benchmark_beta,
     )
     return CandidateScreenRow(
         ticker=symbol,
@@ -718,12 +748,13 @@ def build_candidate_screen_row(
         vol_adjusted_momentum_126=vol_adjusted_126,
         above_200_day_average=above_200,
         correlation_to_incumbent=incumbent_corr,
-        correlation_to_benchmark=None if benchmark_relative is None else benchmark_relative.correlation,
-        beta_to_benchmark=None if benchmark_relative is None else benchmark_relative.beta,
+        correlation_to_benchmark=benchmark_corr,
+        beta_to_benchmark=benchmark_beta,
         replacement_status=None if replacement_result is None else replacement_result.status,
         cagr_delta=None if replacement_result is None else replacement_result.cagr_delta,
         sharpe_delta=None if replacement_result is None else replacement_result.sharpe_delta,
         max_drawdown_delta=None if replacement_result is None else replacement_result.max_drawdown_delta,
+        reason_codes=reason_codes,
         notes=screen_notes(candidate_type, replacement_result, item.notes),
     )
 
@@ -760,6 +791,7 @@ def no_data_screen_row(
         cagr_delta=None if replacement_result is None else replacement_result.cagr_delta,
         sharpe_delta=None if replacement_result is None else replacement_result.sharpe_delta,
         max_drawdown_delta=None if replacement_result is None else replacement_result.max_drawdown_delta,
+        reason_codes=("insufficient_price_history",),
         notes=notes,
     )
 
@@ -836,13 +868,91 @@ def paired_relative_metrics(
     return calculate_relative_metrics(symbol_values, benchmark_values, annualization_periods=annualization_periods)
 
 
+def screen_reason_codes(
+    *,
+    candidate_type: str,
+    role: str,
+    replacement_result: CandidateTestResult | None,
+    return_126: float | None,
+    above_200: bool | None,
+    current_drawdown: float,
+    correlation_to_incumbent: float | None,
+    beta_to_benchmark: float | None,
+) -> tuple[str, ...]:
+    codes: list[str] = []
+
+    if candidate_type == "incumbent":
+        codes.append("current_champion")
+    elif replacement_result is None:
+        codes.append("no_replacement_test")
+    else:
+        codes.append(f"replacement_{replacement_result.status}")
+        if replacement_result.sharpe_delta is not None:
+            if replacement_result.sharpe_delta > 0:
+                codes.append("better_sharpe")
+            elif replacement_result.sharpe_delta < 0:
+                codes.append("weaker_sharpe")
+        if replacement_result.max_drawdown_delta is not None:
+            if replacement_result.max_drawdown_delta > 0:
+                codes.append("better_drawdown")
+            elif replacement_result.max_drawdown_delta < 0:
+                codes.append("worse_drawdown")
+        if replacement_result.cagr_delta is not None:
+            if replacement_result.cagr_delta > 0:
+                codes.append("better_cagr")
+            elif replacement_result.cagr_delta < 0:
+                codes.append("lower_cagr")
+
+    if return_126 is None:
+        codes.append("insufficient_126d_history")
+    elif return_126 >= 0:
+        codes.append("positive_126d_momentum")
+    else:
+        codes.append("negative_126d_momentum")
+
+    if above_200 is None:
+        codes.append("insufficient_trend_history")
+    elif above_200:
+        codes.append("above_200d_average")
+    else:
+        codes.append("below_200d_average")
+
+    if current_drawdown <= -0.20:
+        codes.append("deep_current_drawdown")
+
+    if correlation_to_incumbent is not None:
+        if correlation_to_incumbent <= 0.60:
+            codes.append("low_incumbent_correlation")
+        elif correlation_to_incumbent >= 0.85:
+            codes.append("high_incumbent_correlation")
+
+    if beta_to_benchmark is not None:
+        if beta_to_benchmark <= 0.25:
+            codes.append("low_benchmark_beta")
+        elif beta_to_benchmark >= 1.20:
+            codes.append("high_benchmark_beta")
+
+    role_group = candidate_role_group(role)
+    if role_group == "cash" and current_drawdown > -0.005:
+        codes.append("capital_stability")
+    if role_group == "hedge" and beta_to_benchmark is not None and beta_to_benchmark <= 0.35:
+        codes.append("hedge_like_beta")
+    if role_group == "satellite" and beta_to_benchmark is not None and beta_to_benchmark >= 1.0:
+        codes.append("satellite_beta")
+
+    return tuple(codes)
+
+
 def classify_screen_priority(
     *,
+    role: str,
     candidate_type: str,
     replacement_result: CandidateTestResult | None,
     return_126: float | None,
     above_200: bool | None,
     current_drawdown: float,
+    correlation_to_incumbent: float | None,
+    beta_to_benchmark: float | None,
 ) -> str:
     if candidate_type == "incumbent":
         if current_drawdown <= -0.20 or above_200 is False:
@@ -850,12 +960,59 @@ def classify_screen_priority(
         return "incumbent"
     if replacement_result is None or replacement_result.status == "no_data":
         return "no_data"
+    if replacement_result.status == "reject":
+        return "reject"
+
     trend_ok = above_200 is not False and (return_126 is None or return_126 >= 0)
-    if replacement_result.status == "pass" and trend_ok and current_drawdown > -0.20:
+    if not trend_ok or current_drawdown <= -0.20:
+        return "watch" if replacement_result.status == "pass" else "reject"
+
+    role_group = candidate_role_group(role)
+    sharpe_delta = replacement_result.sharpe_delta or 0.0
+    drawdown_delta = replacement_result.max_drawdown_delta or 0.0
+    cagr_delta = replacement_result.cagr_delta or 0.0
+
+    if role_group == "cash":
+        if replacement_result.status == "pass" and current_drawdown > -0.005 and drawdown_delta >= -0.001:
+            return "high"
+        return "watch" if replacement_result.status in {"pass", "watch"} else "reject"
+
+    if role_group == "hedge":
+        differentiated = correlation_to_incumbent is None or correlation_to_incumbent <= 0.75
+        low_beta = beta_to_benchmark is None or beta_to_benchmark <= 0.35
+        if replacement_result.status == "pass" and differentiated and low_beta and (sharpe_delta > 0 or drawdown_delta > 0):
+            return "high"
+        return "watch" if replacement_result.status in {"pass", "watch"} else "reject"
+
+    if role_group == "core_equity":
+        not_too_hot = beta_to_benchmark is None or beta_to_benchmark <= 0.95
+        if replacement_result.status == "pass" and not_too_hot and cagr_delta >= -0.01 and (sharpe_delta > 0 or drawdown_delta > 0.005):
+            return "high"
+        return "watch" if replacement_result.status in {"pass", "watch"} else "reject"
+
+    if role_group == "satellite":
+        if replacement_result.status == "pass" and (sharpe_delta >= 0 or cagr_delta > 0):
+            return "high"
+        return "watch" if replacement_result.status in {"pass", "watch"} else "reject"
+
+    if replacement_result.status == "pass":
         return "high"
     if replacement_result.status in {"pass", "watch"}:
         return "watch"
     return "reject"
+
+
+def candidate_role_group(role: str) -> str:
+    normalized = role.lower().strip()
+    if normalized in {"t_bill_liquidity"}:
+        return "cash"
+    if normalized in {"managed_futures", "duration_hedge", "stagflation_overlay"}:
+        return "hedge"
+    if normalized in {"fcf_value_anchor", "dividend_quality_core", "ai_adopter"}:
+        return "core_equity"
+    if normalized in {"semis_hardware", "robotics_embodied_ai", "power_grid_cooling", "broad_ai_stack"}:
+        return "satellite"
+    return "general"
 
 
 def screen_notes(
@@ -874,6 +1031,93 @@ def screen_notes(
     if replacement_result.status == "reject":
         return "Candidate failed the current replacement screen."
     return replacement_result.notes
+
+
+def build_role_summaries(rows: tuple[CandidateScreenRow, ...]) -> tuple[CandidateRoleSummary, ...]:
+    grouped: dict[str, list[CandidateScreenRow]] = {}
+    role_order: list[str] = []
+    for row in rows:
+        if row.role not in grouped:
+            grouped[row.role] = []
+            role_order.append(row.role)
+        grouped[row.role].append(row)
+
+    summaries: list[CandidateRoleSummary] = []
+    for role in role_order:
+        role_rows = grouped[role]
+        incumbents = [row for row in role_rows if row.candidate_type == "incumbent"]
+        challengers = [row for row in role_rows if row.candidate_type == "challenger"]
+        best = best_challenger(challengers)
+        incumbent_priority = summarize_incumbent_priority(incumbents)
+        summaries.append(
+            CandidateRoleSummary(
+                role=role,
+                bucket=role_rows[0].bucket,
+                incumbents=tuple(row.ticker for row in incumbents),
+                incumbent_priority=incumbent_priority,
+                best_challenger=None if best is None else best.ticker,
+                best_challenger_priority=None if best is None else best.priority,
+                recommended_action=summary_action(incumbent_priority, best),
+                reason_codes=summary_reason_codes(incumbents, best),
+            )
+        )
+    return tuple(summaries)
+
+
+def best_challenger(rows: list[CandidateScreenRow]) -> CandidateScreenRow | None:
+    if not rows:
+        return None
+    return sorted(rows, key=screen_row_sort_key, reverse=True)[0]
+
+
+def screen_row_sort_key(row: CandidateScreenRow) -> tuple[float, float, float, float, float]:
+    priority_rank = {"high": 4.0, "watch": 3.0, "reject": 1.0, "no_data": 0.0}.get(row.priority, 0.0)
+    return (
+        priority_rank,
+        row.sharpe_delta if row.sharpe_delta is not None else -99.0,
+        row.max_drawdown_delta if row.max_drawdown_delta is not None else -99.0,
+        row.return_126 if row.return_126 is not None else -99.0,
+        row.cagr_delta if row.cagr_delta is not None else -99.0,
+    )
+
+
+def summarize_incumbent_priority(rows: list[CandidateScreenRow]) -> str:
+    if not rows:
+        return "none"
+    if any(row.priority == "monitor" for row in rows):
+        return "monitor"
+    return "incumbent"
+
+
+def summary_action(incumbent_priority: str, best: CandidateScreenRow | None) -> str:
+    if best is None:
+        if incumbent_priority == "monitor":
+            return "Review incumbent; no challenger is currently available in this role."
+        return "Maintain incumbent and keep monitoring the role."
+    if incumbent_priority == "monitor" and best.priority in {"high", "watch"}:
+        return "Prioritize this role for quarterly review."
+    if best.priority == "high":
+        return "Promote best challenger to a quarterly review memo."
+    if best.priority == "watch":
+        return "Keep challenger on watch list and require more evidence."
+    if best.priority == "no_data":
+        return "Maintain incumbent; collect more candidate history."
+    return "Maintain incumbent; challenger currently fails the screen."
+
+
+def summary_reason_codes(
+    incumbents: list[CandidateScreenRow],
+    best: CandidateScreenRow | None,
+) -> tuple[str, ...]:
+    codes: list[str] = []
+    if any(row.priority == "monitor" for row in incumbents):
+        codes.append("incumbent_monitor")
+    if best is not None:
+        codes.append(f"best_{best.priority}")
+        for code in best.reason_codes:
+            if code not in codes:
+                codes.append(code)
+    return tuple(codes)
 
 
 def complete_price_points_for_symbols(price_points: list[PricePoint], required_symbols: set[str]) -> list[PricePoint]:

@@ -3,6 +3,7 @@
 from .assessment import (
     AssessmentFlag,
     AssetUniverseItem,
+    CandidateRoleSummary,
     CandidateScreenReport,
     CandidateScreenRow,
     CandidateTestResult,
@@ -73,6 +74,7 @@ __all__ = [
     "BucketContribution",
     "BucketAllocation",
     "BucketConfig",
+    "CandidateRoleSummary",
     "CandidateScreenReport",
     "CandidateScreenRow",
     "CandidateTestResult",

@@ -1021,6 +1021,18 @@ def print_candidate_screen(report: Any) -> None:
     print(f"As of: {report.as_of.isoformat() if report.as_of is not None else 'n/a'}")
     print(f"Benchmark symbol: {report.benchmark_symbol}")
     print()
+    print("Role Summary")
+    print(f"{'Role':<24} {'Incumbent':<18} {'Best':<8} {'Priority':<10} Action")
+    for row in report.summaries:
+        incumbents = ",".join(row.incumbents) if row.incumbents else "-"
+        print(
+            f"{row.role[:24]:<24} "
+            f"{incumbents[:18]:<18} "
+            f"{(row.best_challenger or '-'):<8} "
+            f"{(row.best_challenger_priority or '-'):<10} "
+            f"{row.recommended_action}"
+        )
+    print()
     print(
         f"{'Priority':<10} {'Ticker':<8} {'For':<8} {'Role':<22} "
         f"{'126d':>10} {'Trend':>8} {'DD':>10} {'Inc Corr':>9} {'Beta':>8} {'Sharpe':>8}"
@@ -1205,11 +1217,24 @@ def format_candidate_screen_markdown(report: Any) -> str:
         f"Benchmark symbol: {report.benchmark_symbol}",
         f"Momentum windows: {', '.join(str(window) for window in report.windows)}",
         "",
+        "## Role Summary",
+        "",
+        "| Role | Incumbent(s) | Best Challenger | Priority | Recommended Action | Reason Codes |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for row in report.summaries:
+        lines.append(
+            f"| {row.role} | {', '.join(row.incumbents) if row.incumbents else '-'} | "
+            f"{row.best_challenger or '-'} | {row.best_challenger_priority or '-'} | "
+            f"{row.recommended_action} | {', '.join(row.reason_codes) if row.reason_codes else '-'} |"
+        )
+    lines.extend([
+        "",
         "## Screen Results",
         "",
-        "| Priority | Ticker | Replace For | Role | 63d | 126d | 252d | Trend | Drawdown | Incumbent Corr | Benchmark Beta | Sharpe Delta | MDD Delta | Notes |",
-        "| --- | --- | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |",
-    ]
+        "| Priority | Ticker | Replace For | Role | 63d | 126d | 252d | Trend | Drawdown | Incumbent Corr | Benchmark Beta | Sharpe Delta | MDD Delta | Reason Codes | Notes |",
+        "| --- | --- | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+    ])
     for row in report.rows:
         lines.append(
             f"| {row.priority} | {row.ticker} | {row.replace_for or '-'} | {row.role} | "
@@ -1217,7 +1242,7 @@ def format_candidate_screen_markdown(report: Any) -> str:
             f"{format_signed_pct(row.return_252)} | {format_trend(row.above_200_day_average)} | "
             f"{format_signed_pct(row.current_drawdown)} | {format_ratio(row.correlation_to_incumbent)} | "
             f"{format_ratio(row.beta_to_benchmark)} | {format_ratio(row.sharpe_delta)} | "
-            f"{format_signed_pct(row.max_drawdown_delta)} | {row.notes} |"
+            f"{format_signed_pct(row.max_drawdown_delta)} | {', '.join(row.reason_codes)} | {row.notes} |"
         )
     lines.extend([
         "",
@@ -1229,6 +1254,8 @@ def format_candidate_screen_markdown(report: Any) -> str:
         "- `monitor`: incumbent has a trend or drawdown concern.",
         "- `reject`: candidate failed the current screen.",
         "- `no_data`: insufficient complete price history for the screen.",
+        "- Reason codes explain the evidence behind the label, such as `better_sharpe`, `better_drawdown`, `low_incumbent_correlation`, `below_200d_average`, or `deep_current_drawdown`.",
+        "- Priority rules are role-aware: hedge candidates need diversifying behavior, cash candidates need stability, core-equity candidates need risk-adjusted improvement, and satellite candidates need growth evidence without breaking the role.",
         "",
     ])
     return "\n".join(lines)

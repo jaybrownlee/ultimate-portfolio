@@ -90,6 +90,8 @@ The candidate screen combines same-role replacement math with ticker-level diagn
 - correlation to incumbent when a replacement target exists
 - beta and correlation to the ticker-level benchmark symbol
 - replacement-test deltas for CAGR, Sharpe, and max drawdown
+- reason codes that explain why each ticker received its priority label
+- role summaries that identify current incumbents, best challengers, and the next review action
 
 Command:
 
@@ -98,6 +100,17 @@ PYTHONPATH=src python3 -m ultimate_portfolio.cli screen-candidates data/cache/ca
 ```
 
 The screen is a research triage tool. It should promote candidates to deeper review, not directly authorize trades.
+
+Priority labels are role-aware:
+
+- Cash candidates need capital stability first; tiny Sharpe improvements are not enough if drawdown worsens.
+- Hedge candidates need low benchmark beta and/or differentiated behavior versus the incumbent.
+- Core equity candidates need risk-adjusted improvement without turning the defensive core into a high-beta growth sleeve.
+- Satellite candidates can tolerate higher beta, but they still need role fit, momentum, and acceptable replacement math.
+
+Reason codes are intentionally plain text so the report can be audited later. Examples include `better_sharpe`, `better_drawdown`, `lower_cagr`, `low_incumbent_correlation`, `high_benchmark_beta`, `below_200d_average`, `deep_current_drawdown`, `capital_stability`, and `hedge_like_beta`.
+
+The role summary should be used as the first pass for "what deserves a memo?" A `high` challenger means "research this", not "trade this." A monitored incumbent means the current holding has a trend or drawdown issue that should be reviewed at the next quarterly checkpoint.
 
 Future signal layers can extend this command without changing the decision workflow:
 

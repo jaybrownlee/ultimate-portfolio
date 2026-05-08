@@ -100,7 +100,14 @@ class AssessmentTests(unittest.TestCase):
         self.assertEqual(rows["SMH"].replace_for, "SPRX")
         self.assertIn(rows["SMH"].priority, {"high", "watch", "reject"})
         self.assertIsNotNone(rows["SMH"].correlation_to_incumbent)
+        self.assertTrue(rows["SMH"].reason_codes)
         self.assertEqual(rows["MISSING"].priority, "no_data")
+        self.assertIn("insufficient_price_history", rows["MISSING"].reason_codes)
+        summary_by_role = {summary.role: summary for summary in report.summaries}
+        self.assertIn("semis_hardware", summary_by_role)
+        self.assertEqual(summary_by_role["semis_hardware"].best_challenger, "SMH")
+        self.assertTrue(summary_by_role["semis_hardware"].recommended_action)
+        self.assertTrue(summary_by_role["semis_hardware"].reason_codes)
 
     def test_quarterly_review_forces_sweep_and_includes_checklist(self) -> None:
         review = run_quarterly_review(
