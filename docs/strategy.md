@@ -20,6 +20,8 @@ Goal: capital preservation, stability, and roughly 11.2% expected return.
 
 Optional overlay: if stagflation risk increases, source 5% GLDM from SGOV and TLT.
 
+Managed-futures note: DBMF is the default hedge sleeve, but CTA remains an active same-role candidate. CTA should be judged by whether it adds differentiated hedge behavior versus DBMF, not merely by whether it has higher recent returns. The preferred research test is DBMF-only versus CTA-only versus a DBMF/CTA blend, with emphasis on rolling correlation, equity-drawdown behavior, TLT-drawdown behavior, Sharpe, max drawdown, worst month, and total-portfolio hedge reliability.
+
 ### 20% Satellite
 
 Goal: high-beta AI and robotics hardware exposure with roughly 28.5% expected return.

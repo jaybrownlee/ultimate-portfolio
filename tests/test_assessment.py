@@ -4,6 +4,7 @@ import unittest
 from ultimate_portfolio.assessment import (
     AssetUniverseItem,
     run_candidate_tests,
+    run_daily_check,
     run_monthly_assessment,
     run_quarterly_review,
 )
@@ -12,6 +13,38 @@ from ultimate_portfolio.strategy import DEFAULT_STRATEGY, Position
 
 
 class AssessmentTests(unittest.TestCase):
+    def test_daily_check_is_clear_when_no_trigger_fires(self) -> None:
+        check = run_daily_check(DEFAULT_STRATEGY, aligned_positions(), date(2026, 5, 8), peak_value=1000)
+
+        self.assertEqual(check.status, "clear")
+        self.assertFalse(check.analysis.boundary_triggered)
+        self.assertFalse(check.analysis.circuit_breaker_triggered)
+        self.assertTrue(any(flag.topic == "process" for flag in check.flags))
+
+    def test_daily_check_warns_near_boundary_before_rebalance_trigger(self) -> None:
+        check = run_daily_check(
+            DEFAULT_STRATEGY,
+            [Position("COWZ", 754), Position("SPRX", 246)],
+            date(2026, 5, 8),
+            peak_value=1000,
+        )
+
+        self.assertEqual(check.status, "watch")
+        self.assertFalse(check.analysis.boundary_triggered)
+        self.assertTrue(any(flag.topic == "master_boundary_warning" for flag in check.flags))
+
+    def test_daily_check_requires_action_when_boundary_fires(self) -> None:
+        check = run_daily_check(
+            DEFAULT_STRATEGY,
+            [Position("COWZ", 750), Position("SPRX", 250)],
+            date(2026, 5, 8),
+            peak_value=1000,
+        )
+
+        self.assertEqual(check.status, "action_required")
+        self.assertTrue(check.analysis.boundary_triggered)
+        self.assertTrue(any(flag.topic == "master_boundary" for flag in check.flags))
+
     def test_monthly_assessment_returns_flags_and_action(self) -> None:
         assessment = run_monthly_assessment(
             DEFAULT_STRATEGY,

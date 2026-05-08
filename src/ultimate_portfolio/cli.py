@@ -12,6 +12,7 @@ from typing import Any
 from .assessment import (
     AssetUniverseItem,
     run_candidate_tests,
+    run_daily_check,
     run_monthly_assessment,
     run_quarterly_review,
 )
@@ -68,12 +69,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not automatically run the internal sweep on calendar quarter end.",
     )
     analyze.add_argument("--full", action="store_true", help="Force a full 80/20 and internal holding rebalance.")
-    analyze.add_argument("--peak-value", type=float, help="Peak account value used for the 20% uncle-point test.")
+    analyze.add_argument("--peak-value", type=float, help="Peak account value used for the 20%% uncle-point test.")
     analyze.add_argument("--ignore-circuit-breaker", action="store_true", help="Do not apply the uncle-point override.")
     analyze.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     analyze.set_defaults(func=run_analyze)
 
-    dca = subparsers.add_parser("dca", help="Build the 25% defensive entry plus monthly DCA schedule.")
+    daily = subparsers.add_parser("daily-check", help="Run the lightweight daily trigger monitor.")
+    add_strategy_flags(daily)
+    daily.add_argument("positions_csv", type=Path, help="Current holdings CSV.")
+    daily.add_argument("--as-of", type=parse_date, default=date.today(), help="Check date, YYYY-MM-DD.")
+    daily.add_argument("--peak-value", type=float, help="Peak account value used for uncle-point monitoring.")
+    daily.add_argument(
+        "--boundary-warning-band",
+        type=float,
+        default=0.005,
+        help="Warn when satellite weight is this close to the 15%%/25%% master boundary.",
+    )
+    daily.add_argument(
+        "--drawdown-warning",
+        type=float,
+        default=0.18,
+        help="Warn when drawdown reaches this level before the 20%% circuit breaker.",
+    )
+    daily.add_argument("--report", type=Path, help="Optional Markdown report path.")
+    daily.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    daily.set_defaults(func=run_daily)
+
+    dca = subparsers.add_parser("dca", help="Build the 25%% defensive entry plus monthly DCA schedule.")
     add_strategy_flags(dca)
     dca.add_argument("total_cash", type=parse_cash_amount, help="Cash to deploy.")
     dca.add_argument("--start", type=parse_date, default=date.today(), help="Deployment start date, YYYY-MM-DD.")
@@ -212,7 +234,7 @@ def add_strategy_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--stagflation-overlay",
         action="store_true",
-        help="Shift 5% of the core from SGOV/TLT into GLDM.",
+        help="Shift 5%% of the core from SGOV/TLT into GLDM.",
     )
 
 
@@ -236,6 +258,27 @@ def run_analyze(args: argparse.Namespace) -> int:
         print(json.dumps(to_jsonable(result), indent=2, sort_keys=True))
     else:
         print_text_report(result, strategy)
+    return 0
+
+
+def run_daily(args: argparse.Namespace) -> int:
+    check = run_daily_check(
+        selected_strategy(args),
+        read_positions_csv(args.positions_csv),
+        args.as_of,
+        peak_value=args.peak_value,
+        boundary_warning_band=args.boundary_warning_band,
+        drawdown_warning=args.drawdown_warning,
+    )
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(format_daily_check_markdown(check), encoding="utf-8")
+    if args.json:
+        print(json.dumps(to_jsonable(check), indent=2, sort_keys=True))
+    else:
+        print_daily_check(check)
+        if args.report:
+            print(f"\nWrote report: {args.report}")
     return 0
 
 
@@ -845,6 +888,35 @@ def print_research_suite_report(suite: dict[str, Any]) -> None:
         )
 
 
+def print_daily_check(check: Any) -> None:
+    analysis = check.analysis
+    print("Daily Trigger Check")
+    print(f"As of: {check.as_of.isoformat()}")
+    print(f"Status: {check.status}")
+    print(f"Recommended action: {check.recommended_action}")
+    print(f"Total value: {format_money(analysis.total_value)}")
+    print(
+        "Satellite: "
+        f"{format_pct(analysis.satellite_weight)} "
+        f"(drift {format_signed_pct(analysis.satellite_drift)}; "
+        f"boundary {format_pct(check.satellite_lower_boundary)} / {format_pct(check.satellite_upper_boundary)})"
+    )
+    if analysis.current_drawdown is None:
+        print("Uncle point: not evaluated; provide --peak-value for live drawdown monitoring")
+    else:
+        print(
+            "Uncle point: "
+            f"{format_signed_pct(analysis.current_drawdown)} drawdown; "
+            f"warning {format_signed_pct(-check.drawdown_warning)}; "
+            f"circuit breaker {'triggered' if analysis.circuit_breaker_triggered else 'not triggered'}"
+        )
+    print(f"Calendar sweep: {'due' if analysis.calendar_sweep_due else 'not due'}")
+    print()
+    print("Flags")
+    for flag in check.flags:
+        print(f"{flag.severity.upper():<6} {flag.topic:<28} {flag.message}")
+
+
 def print_monthly_assessment(assessment: Any) -> None:
     metrics = assessment.backtest.portfolio_metrics
     print("Monthly Assessment")
@@ -904,6 +976,47 @@ def print_quarterly_review(review: Any) -> None:
     print("Decision Checklist")
     for item in review.decision_checklist:
         print(f"- {item}")
+
+
+def format_daily_check_markdown(check: Any) -> str:
+    analysis = check.analysis
+    drawdown_result = (
+        "not evaluated"
+        if analysis.current_drawdown is None
+        else format_signed_pct(analysis.current_drawdown)
+    )
+    lines = [
+        "# Daily Trigger Check",
+        "",
+        f"As of: {check.as_of.isoformat()}",
+        f"Status: {check.status}",
+        f"Recommended action: {check.recommended_action}",
+        "",
+        "## Trigger Snapshot",
+        "",
+        "| Metric | Result |",
+        "| --- | ---: |",
+        f"| Total value | {format_money(analysis.total_value)} |",
+        f"| Satellite weight | {format_pct(analysis.satellite_weight)} |",
+        f"| Satellite drift | {format_signed_pct(analysis.satellite_drift)} |",
+        f"| Satellite lower boundary | {format_pct(check.satellite_lower_boundary)} |",
+        f"| Satellite upper boundary | {format_pct(check.satellite_upper_boundary)} |",
+        f"| Boundary warning band | {format_pct(check.boundary_warning_band)} |",
+        f"| Drawdown | {drawdown_result} |",
+        f"| Drawdown warning | {format_signed_pct(-check.drawdown_warning)} |",
+        f"| Boundary trigger | {'yes' if analysis.boundary_triggered else 'no'} |",
+        f"| Circuit breaker | {'yes' if analysis.circuit_breaker_triggered else 'no'} |",
+        f"| Calendar sweep due | {'yes' if analysis.calendar_sweep_due else 'no'} |",
+        "",
+        "## Flags",
+        "",
+        "| Severity | Topic | Message | Suggested Action |",
+        "| --- | --- | --- | --- |",
+    ]
+    for flag in check.flags:
+        lines.append(f"| {flag.severity} | {flag.topic} | {flag.message} | {flag.suggested_action} |")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def format_monthly_assessment_markdown(assessment: Any) -> str:
@@ -1127,7 +1240,7 @@ def to_jsonable(value: Any) -> Any:
         return value.isoformat()
     if is_dataclass(value):
         return {key: to_jsonable(item) for key, item in asdict(value).items()}
-    if isinstance(value, tuple | list):
+    if isinstance(value, (tuple, list)):
         return [to_jsonable(item) for item in value]
     if isinstance(value, dict):
         return {key: to_jsonable(item) for key, item in value.items()}

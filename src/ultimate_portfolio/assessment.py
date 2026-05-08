@@ -36,6 +36,19 @@ class RecommendedHolding:
 
 
 @dataclass(frozen=True)
+class DailyCheck:
+    as_of: date
+    analysis: AnalysisResult
+    status: str
+    flags: tuple[AssessmentFlag, ...]
+    recommended_action: str
+    satellite_lower_boundary: float
+    satellite_upper_boundary: float
+    boundary_warning_band: float
+    drawdown_warning: float
+
+
+@dataclass(frozen=True)
 class MonthlyAssessment:
     as_of: date
     analysis: AnalysisResult
@@ -95,6 +108,153 @@ class QuarterlyReview:
     rebalance_comparisons: tuple[RebalanceComparison, ...]
     candidate_tests: tuple[CandidateTestResult, ...]
     decision_checklist: tuple[str, ...]
+
+
+def run_daily_check(
+    strategy: HierarchicalStrategy,
+    positions: list[Position],
+    as_of: date,
+    *,
+    peak_value: float | None = None,
+    boundary_warning_band: float = 0.005,
+    drawdown_warning: float = 0.18,
+) -> DailyCheck:
+    if boundary_warning_band < 0:
+        raise ValueError("Boundary warning band cannot be negative.")
+    if drawdown_warning <= 0:
+        raise ValueError("Drawdown warning must be positive.")
+    if drawdown_warning >= strategy.circuit_breaker_drawdown:
+        raise ValueError("Drawdown warning should be below the circuit-breaker drawdown.")
+
+    analysis = strategy.analyze(positions, as_of, peak_value=peak_value)
+    satellite_target = next(
+        bucket.target_weight
+        for bucket in strategy.buckets
+        if bucket.name == strategy.satellite_bucket
+    )
+    lower_boundary = satellite_target - strategy.drift_threshold
+    upper_boundary = satellite_target + strategy.drift_threshold
+    flags = build_daily_check_flags(
+        analysis,
+        lower_boundary=lower_boundary,
+        upper_boundary=upper_boundary,
+        boundary_warning_band=boundary_warning_band,
+        drawdown_warning=drawdown_warning,
+        peak_value=peak_value,
+    )
+    status = daily_check_status(flags)
+    return DailyCheck(
+        as_of=as_of,
+        analysis=analysis,
+        status=status,
+        flags=flags,
+        recommended_action=daily_check_action(status),
+        satellite_lower_boundary=lower_boundary,
+        satellite_upper_boundary=upper_boundary,
+        boundary_warning_band=boundary_warning_band,
+        drawdown_warning=drawdown_warning,
+    )
+
+
+def build_daily_check_flags(
+    analysis: AnalysisResult,
+    *,
+    lower_boundary: float,
+    upper_boundary: float,
+    boundary_warning_band: float,
+    drawdown_warning: float,
+    peak_value: float | None,
+) -> tuple[AssessmentFlag, ...]:
+    flags: list[AssessmentFlag] = []
+
+    if analysis.circuit_breaker_triggered:
+        flags.append(
+            AssessmentFlag(
+                "red",
+                "circuit_breaker",
+                "Total portfolio drawdown breached the 20% uncle point.",
+                "Move satellite exposure to SGOV and run a structural hardware-cycle review before re-risking.",
+            )
+        )
+    elif analysis.current_drawdown is not None and analysis.current_drawdown <= -drawdown_warning:
+        flags.append(
+            AssessmentFlag(
+                "yellow",
+                "drawdown_warning",
+                "Total portfolio drawdown is near the 20% uncle point.",
+                "Avoid adding risk and prepare the circuit-breaker review packet.",
+            )
+        )
+
+    if analysis.boundary_triggered:
+        flags.append(
+            AssessmentFlag(
+                "red",
+                "master_boundary",
+                "Satellite exposure breached the 15%/25% master boundary.",
+                "Run the boundary rebalance process back to the 80/20 master allocation.",
+            )
+        )
+    elif boundary_warning_band > 0:
+        near_lower = analysis.satellite_weight <= lower_boundary + boundary_warning_band
+        near_upper = analysis.satellite_weight >= upper_boundary - boundary_warning_band
+        if near_lower or near_upper:
+            flags.append(
+                AssessmentFlag(
+                    "yellow",
+                    "master_boundary_warning",
+                    "Satellite exposure is close to the 15%/25% master boundary.",
+                    "Monitor drift, but do not rebalance across the boundary until the trigger actually fires.",
+                )
+            )
+
+    if analysis.calendar_sweep_due:
+        flags.append(
+            AssessmentFlag(
+                "yellow",
+                "calendar_sweep",
+                "The quarterly internal sweep is due.",
+                "Run the quarterly review workflow rather than making ad hoc daily changes.",
+            )
+        )
+
+    if peak_value is None:
+        flags.append(
+            AssessmentFlag(
+                "info",
+                "peak_value_missing",
+                "Peak account value was not supplied, so live uncle-point monitoring is incomplete.",
+                "Provide --peak-value when running against a real account.",
+            )
+        )
+
+    if not any(flag.severity in {"red", "yellow"} for flag in flags):
+        flags.append(
+            AssessmentFlag(
+                "green",
+                "process",
+                "No daily rule-based trigger fired.",
+                "Hold the strategy and continue monitoring.",
+            )
+        )
+    return tuple(flags)
+
+
+def daily_check_status(flags: tuple[AssessmentFlag, ...]) -> str:
+    severities = {flag.severity for flag in flags}
+    if "red" in severities:
+        return "action_required"
+    if "yellow" in severities:
+        return "watch"
+    return "clear"
+
+
+def daily_check_action(status: str) -> str:
+    if status == "action_required":
+        return "Action required: follow the rule-based rebalance or circuit-breaker SOP before making discretionary changes."
+    if status == "watch":
+        return "Watch: monitor the flagged issue, but do not make discretionary strategy changes from a daily check alone."
+    return "Clear: no daily trigger requires action."
 
 
 def run_monthly_assessment(

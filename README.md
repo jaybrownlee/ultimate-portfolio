@@ -5,6 +5,7 @@ Python tooling for the 80/20 Hierarchical AI Infrastructure & Adopter Portfolio.
 The project models the strategy as an operating system, not just a rebalance calculator:
 
 - master 80/20 core/satellite drift control
+- lightweight daily trigger checks
 - quarterly internal bucket sweeps
 - 20% drawdown uncle point that moves satellite exposure to SGOV
 - 25% defensive-core entry plus 3-6 month DCA schedule
@@ -206,7 +207,13 @@ Current generated reports:
 
 ## Assessment Process
 
-The monthly and quarterly operating process is documented in [docs/assessment-process.md](docs/assessment-process.md).
+The daily, monthly, and quarterly operating process is documented in [docs/assessment-process.md](docs/assessment-process.md).
+
+Run a daily trigger check:
+
+```bash
+PYTHONPATH=src python3 -m ultimate_portfolio.cli daily-check examples/positions.csv --as-of 2026-05-08 --peak-value 100000 --report docs/research/daily-check.md
+```
 
 Run a monthly monitoring report:
 
