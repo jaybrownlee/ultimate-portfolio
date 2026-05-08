@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ultimate-portfolio"
+version = "0.1.0"
+description = "80/20 AI infrastructure core/satellite portfolio automation"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Jay" }]
+dependencies = []
+
+[project.scripts]
+ultimate-portfolio = "ultimate_portfolio.cli:main"
+hierarchical-etf = "ultimate_portfolio.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
