@@ -136,6 +136,74 @@ Scenario shocks currently include:
 
 Monte Carlo uses the strategy's 11.2% core and 28.5% satellite expected returns, with configurable volatility and correlation assumptions.
 
+## Backtest Research
+
+The first research harness runs from a long-form price CSV. It is dependency-light and uses transparent internal math for CAGR, volatility, Sharpe, Sortino, Calmar, drawdowns, VaR/CVaR, beta, correlation, tracking error, and information ratio.
+
+Price CSV format:
+
+```csv
+date,ticker,price
+2026-01-31,COWZ,100
+2026-01-31,QQQ,100
+```
+
+Run the sample:
+
+```bash
+PYTHONPATH=src python3 -m ultimate_portfolio.cli backtest examples/prices_sample.csv --annualization 12
+```
+
+Use a different benchmark blend:
+
+```bash
+PYTHONPATH=src python3 -m ultimate_portfolio.cli backtest examples/prices_sample.csv --annualization 12 --benchmark VBIAX:0.8,QQQ:0.2
+```
+
+The default live data downloader uses Yahoo's chart endpoint through the Python standard library:
+
+```bash
+PYTHONPATH=src python3 -m ultimate_portfolio.cli download-prices --start 2025-04-09 --end 2026-05-07 --output data/cache/current_prices.csv
+PYTHONPATH=src python3 -m ultimate_portfolio.cli backtest data/cache/current_prices.csv
+```
+
+You can also use `--provider yfinance` after installing the research extras:
+
+```bash
+python3 -m pip install '.[research]'
+PYTHONPATH=src python3 -m ultimate_portfolio.cli download-prices --provider yfinance --start 2025-04-09 --end 2026-05-07 --output data/cache/current_prices.csv
+```
+
+Because BAI and ELFY are new funds, actual-current-portfolio evidence should be separated from proxy-regime research.
+The project research discipline is documented in [docs/research-methodology.md](docs/research-methodology.md).
+
+The first actual-current-holdings research note is saved at [docs/research/2026-05-08-current-portfolio-backtest.md](docs/research/2026-05-08-current-portfolio-backtest.md).
+
+Run the fuller research suite:
+
+```bash
+PYTHONPATH=src python3 -m ultimate_portfolio.cli research-suite data/cache/current_prices.csv --annualization 252 --risk-free-rate 0.04 --report docs/research/research-suite.md
+```
+
+The suite adds:
+
+- rebalance frequency comparison
+- 63-period and 126-period rolling diagnostics
+- bucket and symbol contribution analysis
+- bootstrap, block bootstrap, and Student-t historical Monte Carlo
+
+Proxy-regime research can substitute older proxies for new funds:
+
+```bash
+PYTHONPATH=src python3 -m ultimate_portfolio.cli download-prices --tickers ARKQ,COWZ,DBMF,DE,GRID,JPM,QQQ,SGOV,SPRX,TLT,VBIAX,WMT --start 2021-08-04 --end 2026-05-08 --output data/cache/proxy_prices.csv
+PYTHONPATH=src python3 -m ultimate_portfolio.cli research-suite data/cache/proxy_prices.csv --proxy-map BAI=QQQ,ELFY=GRID --annualization 252 --risk-free-rate 0.04 --report docs/research/proxy-regime-suite.md
+```
+
+Current generated reports:
+
+- [docs/research/2026-05-08-research-suite.md](docs/research/2026-05-08-research-suite.md)
+- [docs/research/2026-05-08-proxy-regime-suite.md](docs/research/2026-05-08-proxy-regime-suite.md)
+
 ## Monthly Review
 
 History CSV:

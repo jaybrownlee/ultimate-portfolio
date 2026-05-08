@@ -56,3 +56,21 @@ Adopter screen requires 2 of 3:
 - IT capex growth greater than 10%
 - declining SG&A intensity
 - gross margin expansion greater than 50 bps
+
+## Research Evidence Discipline
+
+The AI infrastructure trade was not in play for the full historical test period, and several current funds have limited live history. Research must separate:
+
+- actual-current evidence: current holdings only, short but real
+- proxy-regime evidence: longer history using documented proxies
+- thesis-inception evidence: windows that start near the AI regime shift
+
+Interpretation rule:
+
+```text
+Longer backtest = better for risk regime behavior.
+Thesis-inception backtest = better for AI trade validity.
+Actual-current backtest = better for live implementation monitoring.
+```
+
+See [research-methodology.md](research-methodology.md) for the full research discipline.

@@ -11,6 +11,26 @@ requires-python = ">=3.11"
 authors = [{ name = "Jay" }]
 dependencies = []
 
+[project.optional-dependencies]
+research = [
+    "pandas",
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "yfinance",
+    "requests",
+]
+risk = [
+    "empyrical",
+    "pyfolio-reloaded",
+    "pyportfolioopt",
+    "riskfolio-lib",
+    "statsmodels",
+    "arch",
+    "vectorbt",
+    "optuna",
+]
+
 [project.scripts]
 ultimate-portfolio = "ultimate_portfolio.cli:main"
 hierarchical-etf = "ultimate_portfolio.cli:main"

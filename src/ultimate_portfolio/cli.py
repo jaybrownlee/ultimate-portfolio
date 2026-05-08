@@ -9,7 +9,19 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .data import download_yahoo_chart_prices, download_yfinance_prices
 from .dca import build_dca_schedule
+from .research import (
+    HistoricalMonteCarloAssumptions,
+    PricePoint,
+    apply_proxy_map,
+    compare_rebalance_frequencies,
+    contribution_report,
+    periodic_returns,
+    rolling_metrics,
+    run_historical_monte_carlo,
+    run_strategy_backtest,
+)
 from .risk import (
     AdopterMetrics,
     MonteCarloAssumptions,
@@ -27,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.func(args) or 0)
-    except (OSError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError, argparse.ArgumentTypeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
@@ -78,6 +90,59 @@ def build_parser() -> argparse.ArgumentParser:
     stress.add_argument("--seed", type=int, default=7, help="Monte Carlo random seed.")
     stress.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     stress.set_defaults(func=run_stress)
+
+    backtest = subparsers.add_parser("backtest", help="Backtest the target allocation from a long-form price CSV.")
+    add_strategy_flags(backtest)
+    backtest.add_argument("prices_csv", type=Path, help="CSV with date, ticker, price columns.")
+    backtest.add_argument("--initial-value", type=float, default=100000, help="Starting portfolio value.")
+    backtest.add_argument(
+        "--rebalance",
+        choices=("none", "monthly", "quarterly", "yearly"),
+        default="quarterly",
+        help="Portfolio rebalance frequency.",
+    )
+    backtest.add_argument("--annualization", type=int, default=252, help="Periods per year, usually 252 for daily data.")
+    backtest.add_argument("--risk-free-rate", type=float, default=0.0, help="Annual risk-free rate used for Sharpe and Sortino.")
+    backtest.add_argument(
+        "--benchmark",
+        default="VBIAX:0.8,QQQ:0.2",
+        help="Comma-separated benchmark weights, e.g. VBIAX:0.8,QQQ:0.2. Use empty string for no benchmark.",
+    )
+    backtest.add_argument(
+        "--proxy-map",
+        default="",
+        help="Comma-separated target=proxy mappings for proxy-regime research, e.g. ELFY=GRID,BAI=QQQ.",
+    )
+    backtest.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    backtest.set_defaults(func=run_backtest)
+
+    suite = subparsers.add_parser("research-suite", help="Run backtest, rolling diagnostics, rebalance comparison, attribution, and historical Monte Carlo.")
+    add_strategy_flags(suite)
+    suite.add_argument("prices_csv", type=Path, help="CSV with date, ticker, price columns.")
+    suite.add_argument("--initial-value", type=float, default=100000, help="Starting portfolio value.")
+    suite.add_argument("--annualization", type=int, default=252, help="Periods per year, usually 252 for daily data.")
+    suite.add_argument("--risk-free-rate", type=float, default=0.0, help="Annual risk-free rate used for Sharpe and Sortino.")
+    suite.add_argument("--benchmark", default="VBIAX:0.8,QQQ:0.2", help="Comma-separated benchmark weights.")
+    suite.add_argument("--proxy-map", default="", help="Comma-separated target=proxy mappings for proxy-regime research.")
+    suite.add_argument("--mc-paths", type=int, default=2000, help="Historical Monte Carlo path count.")
+    suite.add_argument("--mc-periods", type=int, default=252, help="Historical Monte Carlo periods per path.")
+    suite.add_argument("--report", type=Path, help="Optional Markdown report path.")
+    suite.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    suite.set_defaults(func=run_research_suite)
+
+    download = subparsers.add_parser("download-prices", help="Download adjusted close prices into backtest CSV format.")
+    add_strategy_flags(download)
+    download.add_argument("--tickers", help="Comma-separated tickers. Defaults to strategy holdings plus VBIAX and QQQ.")
+    download.add_argument("--start", type=parse_date, required=True, help="Start date, YYYY-MM-DD.")
+    download.add_argument("--end", type=parse_date, default=date.today(), help="End date, YYYY-MM-DD. Providers treat this as exclusive.")
+    download.add_argument("--output", type=Path, default=Path("data/cache/prices.csv"), help="Output CSV path.")
+    download.add_argument(
+        "--provider",
+        choices=("yahoo-chart", "yfinance"),
+        default="yahoo-chart",
+        help="Data provider. yahoo-chart uses the standard library; yfinance requires research extras.",
+    )
+    download.set_defaults(func=run_download_prices)
 
     review = subparsers.add_parser("review", help="Run the monthly review protocol from a history CSV.")
     review.add_argument("history_csv", type=Path, help="CSV with date, portfolio_value, and optional benchmark/satellite/qqq values.")
@@ -164,6 +229,111 @@ def run_stress(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_backtest(args: argparse.Namespace) -> int:
+    proxy_map = parse_proxy_map(args.proxy_map)
+    price_points = apply_proxy_map(read_prices_csv(args.prices_csv), proxy_map)
+    result = run_strategy_backtest(
+        selected_strategy(args),
+        price_points,
+        initial_value=args.initial_value,
+        rebalance_frequency=args.rebalance,
+        annualization_periods=args.annualization,
+        risk_free_rate=args.risk_free_rate,
+        benchmark_weights=parse_weight_map(args.benchmark),
+        mode="proxy_regime" if proxy_map else "actual_current_portfolio",
+    )
+    if args.json:
+        print(json.dumps(to_jsonable(result), indent=2, sort_keys=True))
+    else:
+        print_backtest_report(result)
+    return 0
+
+
+def run_research_suite(args: argparse.Namespace) -> int:
+    strategy = selected_strategy(args)
+    benchmark_weights = parse_weight_map(args.benchmark)
+    proxy_map = parse_proxy_map(args.proxy_map)
+    price_points = apply_proxy_map(read_prices_csv(args.prices_csv), proxy_map)
+    backtest = run_strategy_backtest(
+        strategy,
+        price_points,
+        initial_value=args.initial_value,
+        rebalance_frequency="quarterly",
+        annualization_periods=args.annualization,
+        risk_free_rate=args.risk_free_rate,
+        benchmark_weights=benchmark_weights,
+        mode="proxy_regime" if proxy_map else "actual_current_portfolio",
+    )
+    comparisons = compare_rebalance_frequencies(
+        strategy,
+        price_points,
+        benchmark_weights=benchmark_weights,
+        initial_value=args.initial_value,
+        annualization_periods=args.annualization,
+        risk_free_rate=args.risk_free_rate,
+    )
+    contribution = contribution_report(strategy, price_points, annualization_periods=args.annualization)
+    rolling_63 = rolling_metrics(
+        backtest.portfolio_values,
+        benchmark_values=backtest.benchmark_values,
+        window=63,
+        annualization_periods=args.annualization,
+        risk_free_rate=args.risk_free_rate,
+    )
+    rolling_126 = rolling_metrics(
+        backtest.portfolio_values,
+        benchmark_values=backtest.benchmark_values,
+        window=126,
+        annualization_periods=args.annualization,
+        risk_free_rate=args.risk_free_rate,
+    )
+    portfolio_returns = periodic_returns([point.value for point in backtest.portfolio_values])
+    monte_carlo = tuple(
+        run_historical_monte_carlo(
+            portfolio_returns,
+            HistoricalMonteCarloAssumptions(
+                paths=args.mc_paths,
+                periods=args.mc_periods,
+                starting_value=args.initial_value,
+                method=method,
+            ),
+        )
+        for method in ("bootstrap", "block_bootstrap", "student_t")
+    )
+    suite = {
+        "backtest": backtest,
+        "rebalance_comparisons": comparisons,
+        "contribution": contribution,
+        "rolling_63": rolling_63,
+        "rolling_126": rolling_126,
+        "historical_monte_carlo": monte_carlo,
+    }
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(format_research_suite_markdown(suite), encoding="utf-8")
+    if args.json:
+        print(json.dumps(to_jsonable(suite), indent=2, sort_keys=True))
+    else:
+        print_research_suite_report(suite)
+        if args.report:
+            print(f"\nWrote report: {args.report}")
+    return 0
+
+
+def run_download_prices(args: argparse.Namespace) -> int:
+    strategy = selected_strategy(args)
+    if args.tickers:
+        tickers = [ticker.strip() for ticker in args.tickers.split(",") if ticker.strip()]
+    else:
+        tickers = sorted(strategy.symbols | {"VBIAX", "QQQ"})
+    if args.provider == "yahoo-chart":
+        download_yahoo_chart_prices(tickers, args.start, args.end, args.output)
+    else:
+        download_yfinance_prices(tickers, args.start, args.end, args.output)
+    print(f"Wrote prices for {len(tickers)} ticker(s) to {args.output}")
+    return 0
+
+
 def run_review(args: argparse.Namespace) -> int:
     result = review_history(read_review_csv(args.history_csv))
     if args.json:
@@ -214,6 +384,25 @@ def read_positions_csv(path: Path) -> list[Position]:
         positions.append(Position(ticker=ticker, market_value=market_value, shares=shares, price=price))
 
     return positions
+
+
+def read_prices_csv(path: Path) -> list[PricePoint]:
+    points: list[PricePoint] = []
+    with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None:
+            raise ValueError("Prices CSV must include headers.")
+        for row_number, row in enumerate(reader, start=2):
+            normalized = normalize_row(row)
+            day = parse_date(required(normalized, "date", row_number))
+            ticker = normalized.get("ticker") or normalized.get("symbol")
+            if not ticker:
+                raise ValueError(f"Row {row_number}: missing ticker.")
+            price_text = normalized.get("price") or normalized.get("adj_close") or normalized.get("close")
+            if not price_text:
+                raise ValueError(f"Row {row_number}: missing price.")
+            points.append(PricePoint(day, ticker, parse_float(price_text, f"Row {row_number}: price")))
+    return points
 
 
 def read_review_csv(path: Path) -> list[ReviewObservation]:
@@ -273,6 +462,38 @@ def required(row: dict[str, str], key: str, row_number: int) -> str:
 
 def normalize_row(row: dict[str, str]) -> dict[str, str]:
     return {key.strip().lower(): value.strip() for key, value in row.items() if key is not None and value is not None}
+
+
+def parse_weight_map(value: str) -> dict[str, float]:
+    if not value.strip():
+        return {}
+    weights: dict[str, float] = {}
+    for item in value.split(","):
+        if not item.strip():
+            continue
+        if ":" not in item:
+            raise ValueError(f"Weight entry must use TICKER:WEIGHT format, got {item!r}.")
+        symbol, weight = item.split(":", 1)
+        weights[symbol.upper().strip()] = parse_float(weight.strip(), f"weight for {symbol.strip()}")
+    return weights
+
+
+def parse_proxy_map(value: str) -> dict[str, str]:
+    if not value.strip():
+        return {}
+    mapping: dict[str, str] = {}
+    for item in value.split(","):
+        if not item.strip():
+            continue
+        if "=" not in item:
+            raise ValueError(f"Proxy entry must use TARGET=PROXY format, got {item!r}.")
+        target, proxy = item.split("=", 1)
+        target_symbol = target.upper().strip()
+        proxy_symbol = proxy.upper().strip()
+        if not target_symbol or not proxy_symbol:
+            raise ValueError(f"Proxy entry must include both target and proxy, got {item!r}.")
+        mapping[target_symbol] = proxy_symbol
+    return mapping
 
 
 def parse_cash_amount(value: str) -> float:
@@ -385,6 +606,192 @@ def print_stress_report(scenarios: Any, monte_carlo: Any) -> None:
     print(f"Average max drawdown: {format_signed_pct(monte_carlo.average_max_drawdown)}")
 
 
+def print_backtest_report(result: Any) -> None:
+    metrics = result.portfolio_metrics
+    print("Backtest")
+    print(f"Mode: {result.mode}")
+    print(f"Window: {metrics.start_date.isoformat()} to {metrics.end_date.isoformat()} ({metrics.periods} return periods)")
+    print(f"Initial / final value: {format_money(metrics.start_value)} / {format_money(metrics.end_value)}")
+    print(f"Rebalance: {result.rebalance_frequency}")
+    if result.skipped_dates:
+        print(f"Skipped incomplete price dates: {len(result.skipped_dates)}")
+    print()
+    print("Portfolio Metrics")
+    print(f"Total return: {format_signed_pct(metrics.total_return)}")
+    print(f"CAGR: {format_signed_pct(metrics.cagr)}")
+    print(f"Annualized volatility: {format_pct(metrics.annualized_volatility)}")
+    print(f"Sharpe: {format_ratio(metrics.sharpe_ratio)}")
+    print(f"Sortino: {format_ratio(metrics.sortino_ratio)}")
+    print(f"Calmar: {format_ratio(metrics.calmar_ratio)}")
+    print(f"Max drawdown: {format_signed_pct(metrics.max_drawdown)}")
+    print(
+        "Drawdown window: "
+        f"{metrics.drawdown_peak_date.isoformat()} to {metrics.drawdown_trough_date.isoformat()}"
+        f"{'' if metrics.drawdown_recovery_date is None else ' recovered ' + metrics.drawdown_recovery_date.isoformat()}"
+    )
+    print(f"VaR 95%: {format_signed_pct(metrics.var_95)}")
+    print(f"CVaR 95%: {format_signed_pct(metrics.cvar_95)}")
+    print(f"Best / worst period: {format_signed_pct(metrics.best_period_return)} / {format_signed_pct(metrics.worst_period_return)}")
+    print(f"Positive period rate: {format_pct(metrics.positive_period_rate)}")
+
+    if result.benchmark_metrics is not None and result.relative_metrics is not None:
+        benchmark = result.benchmark_metrics
+        relative = result.relative_metrics
+        print()
+        print("Benchmark Metrics")
+        print(f"Benchmark total return: {format_signed_pct(benchmark.total_return)}")
+        print(f"Benchmark CAGR: {format_signed_pct(benchmark.cagr)}")
+        print(f"Benchmark volatility: {format_pct(benchmark.annualized_volatility)}")
+        print(f"Benchmark max drawdown: {format_signed_pct(benchmark.max_drawdown)}")
+        print()
+        print("Relative Metrics")
+        print(f"Active return: {format_signed_pct(relative.active_return)}")
+        print(f"Tracking error: {format_pct(relative.tracking_error or 0.0) if relative.tracking_error is not None else 'n/a'}")
+        print(f"Information ratio: {format_ratio(relative.information_ratio)}")
+        print(f"Beta: {format_ratio(relative.beta)}")
+        print(f"Correlation: {format_ratio(relative.correlation)}")
+
+
+def print_research_suite_report(suite: dict[str, Any]) -> None:
+    print_backtest_report(suite["backtest"])
+    print()
+    print("Rebalance Comparison")
+    print(f"{'Freq':<10} {'Return':>10} {'CAGR':>10} {'Vol':>10} {'Sharpe':>8} {'MDD':>10} {'Active':>10} {'IR':>8}")
+    for row in suite["rebalance_comparisons"]:
+        print(
+            f"{row.frequency:<10} "
+            f"{format_signed_pct(row.total_return):>10} "
+            f"{format_signed_pct(row.cagr):>10} "
+            f"{format_pct(row.annualized_volatility):>10} "
+            f"{format_ratio(row.sharpe_ratio):>8} "
+            f"{format_signed_pct(row.max_drawdown):>10} "
+            f"{format_signed_pct(row.active_return):>10} "
+            f"{format_ratio(row.information_ratio):>8}"
+        )
+    print()
+    print("Rolling Diagnostics")
+    print_latest_rolling("63-period", suite["rolling_63"])
+    print_latest_rolling("126-period", suite["rolling_126"])
+    print()
+    print("Bucket Contribution")
+    print(f"{'Bucket':<12} {'Weight':>10} {'Return Ctr':>12} {'Ann Ctr':>12} {'Vol Ctr':>10}")
+    for row in suite["contribution"].bucket_contributions:
+        print(
+            f"{row.bucket:<12} "
+            f"{format_pct(row.weight):>10} "
+            f"{format_signed_pct(row.arithmetic_return_contribution):>12} "
+            f"{format_signed_pct(row.annualized_return_contribution):>12} "
+            f"{format_pct(row.volatility_contribution or 0.0):>10}"
+        )
+    print()
+    print("Historical Monte Carlo")
+    print(f"{'Method':<16} {'Median':>14} {'P5':>14} {'P95':>14} {'Loss %':>10} {'Med MDD':>10}")
+    for row in suite["historical_monte_carlo"]:
+        print(
+            f"{row.method:<16} "
+            f"{format_money(row.median_ending_value):>14} "
+            f"{format_money(row.percentile_5_ending_value):>14} "
+            f"{format_money(row.percentile_95_ending_value):>14} "
+            f"{format_pct(row.probability_of_loss):>10} "
+            f"{format_signed_pct(row.median_max_drawdown):>10}"
+        )
+
+
+def print_latest_rolling(label: str, rows: Any) -> None:
+    if not rows:
+        print(f"{label}: not enough observations")
+        return
+    latest = rows[-1]
+    print(
+        f"{label}: {latest.observation_date.isoformat()} "
+        f"return {format_signed_pct(latest.total_return)}, "
+        f"vol {format_pct(latest.annualized_volatility)}, "
+        f"Sharpe {format_ratio(latest.sharpe_ratio)}, "
+        f"corr {format_ratio(latest.correlation)}"
+    )
+
+
+def format_research_suite_markdown(suite: dict[str, Any]) -> str:
+    backtest = suite["backtest"]
+    metrics = backtest.portfolio_metrics
+    lines = [
+        "# Research Suite",
+        "",
+        f"Mode: {backtest.mode}",
+        f"Window: {metrics.start_date.isoformat()} to {metrics.end_date.isoformat()}",
+        f"Return periods: {metrics.periods}",
+        f"Rebalance: {backtest.rebalance_frequency}",
+        "",
+        "## Portfolio Metrics",
+        "",
+        "| Metric | Result |",
+        "| --- | ---: |",
+        f"| Total return | {format_signed_pct(metrics.total_return)} |",
+        f"| CAGR | {format_signed_pct(metrics.cagr)} |",
+        f"| Volatility | {format_pct(metrics.annualized_volatility)} |",
+        f"| Sharpe | {format_ratio(metrics.sharpe_ratio)} |",
+        f"| Sortino | {format_ratio(metrics.sortino_ratio)} |",
+        f"| Max drawdown | {format_signed_pct(metrics.max_drawdown)} |",
+        f"| VaR 95% | {format_signed_pct(metrics.var_95)} |",
+        f"| CVaR 95% | {format_signed_pct(metrics.cvar_95)} |",
+        "",
+        "## Rebalance Comparison",
+        "",
+        "| Frequency | Return | CAGR | Volatility | Sharpe | Max Drawdown | Active | IR |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for row in suite["rebalance_comparisons"]:
+        lines.append(
+            f"| {row.frequency} | {format_signed_pct(row.total_return)} | {format_signed_pct(row.cagr)} | "
+            f"{format_pct(row.annualized_volatility)} | {format_ratio(row.sharpe_ratio)} | "
+            f"{format_signed_pct(row.max_drawdown)} | {format_signed_pct(row.active_return)} | "
+            f"{format_ratio(row.information_ratio)} |"
+        )
+    lines.extend([
+        "",
+        "## Rolling Diagnostics",
+        "",
+        rolling_markdown_line("63-period", suite["rolling_63"]),
+        rolling_markdown_line("126-period", suite["rolling_126"]),
+        "",
+        "## Bucket Contribution",
+        "",
+        "| Bucket | Weight | Return Contribution | Annualized Contribution | Vol Contribution |",
+        "| --- | ---: | ---: | ---: | ---: |",
+    ])
+    for row in suite["contribution"].bucket_contributions:
+        lines.append(
+            f"| {row.bucket} | {format_pct(row.weight)} | {format_signed_pct(row.arithmetic_return_contribution)} | "
+            f"{format_signed_pct(row.annualized_return_contribution)} | {format_pct(row.volatility_contribution or 0.0)} |"
+        )
+    lines.extend([
+        "",
+        "## Historical Monte Carlo",
+        "",
+        "| Method | Median | P5 | P95 | Probability of Loss | Median Max Drawdown |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ])
+    for row in suite["historical_monte_carlo"]:
+        lines.append(
+            f"| {row.method} | {format_money(row.median_ending_value)} | {format_money(row.percentile_5_ending_value)} | "
+            f"{format_money(row.percentile_95_ending_value)} | {format_pct(row.probability_of_loss)} | "
+            f"{format_signed_pct(row.median_max_drawdown)} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def rolling_markdown_line(label: str, rows: Any) -> str:
+    if not rows:
+        return f"- {label}: not enough observations."
+    latest = rows[-1]
+    return (
+        f"- {label}: as of {latest.observation_date.isoformat()}, return {format_signed_pct(latest.total_return)}, "
+        f"volatility {format_pct(latest.annualized_volatility)}, Sharpe {format_ratio(latest.sharpe_ratio)}, "
+        f"benchmark correlation {format_ratio(latest.correlation)}."
+    )
+
+
 def print_review_report(result: Any) -> None:
     print(f"Review window: {result.start_date.isoformat()} to {result.end_date.isoformat()}")
     print(f"Portfolio return: {format_signed_pct(result.portfolio_return)}")
@@ -431,6 +838,12 @@ def format_money(value: float) -> str:
 
 def format_pct(value: float) -> str:
     return f"{value * 100:,.2f}%"
+
+
+def format_ratio(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:,.2f}"
 
 
 def format_signed_pct(value: float | None) -> str:
