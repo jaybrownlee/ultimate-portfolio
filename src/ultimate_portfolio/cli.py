@@ -11,6 +11,7 @@ from typing import Any
 
 from .assessment import (
     AssetUniverseItem,
+    run_candidate_screen,
     run_candidate_tests,
     run_daily_check,
     run_monthly_assessment,
@@ -185,6 +186,22 @@ def build_parser() -> argparse.ArgumentParser:
     candidate.add_argument("--max-candidates", type=int, default=30, help="Maximum candidate rows to test.")
     candidate.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     candidate.set_defaults(func=run_candidate_test)
+
+    screen = subparsers.add_parser("screen-candidates", help="Rank incumbents and challengers with momentum and risk diagnostics.")
+    add_strategy_flags(screen)
+    screen.add_argument("prices_csv", type=Path, help="Long-form price CSV.")
+    screen.add_argument("asset_universe_csv", type=Path, help="Asset universe CSV.")
+    screen.add_argument("--initial-value", type=float, default=100000, help="Backtest starting value.")
+    screen.add_argument("--annualization", type=int, default=252, help="Periods per year.")
+    screen.add_argument("--risk-free-rate", type=float, default=0.0, help="Annual risk-free rate.")
+    screen.add_argument("--benchmark", default="VBIAX:0.8,QQQ:0.2", help="Comma-separated portfolio benchmark weights.")
+    screen.add_argument("--benchmark-symbol", default="QQQ", help="Single symbol for ticker-level beta/correlation diagnostics.")
+    screen.add_argument("--proxy-map", default="", help="Comma-separated target=proxy mappings.")
+    screen.add_argument("--windows", default="63,126,252", help="Comma-separated momentum windows.")
+    screen.add_argument("--max-candidates", type=int, default=30, help="Maximum challenger rows to screen.")
+    screen.add_argument("--report", type=Path, help="Optional Markdown report path.")
+    screen.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    screen.set_defaults(func=run_candidate_screen_command)
 
     quarterly = subparsers.add_parser("quarterly-review", help="Run quarterly rebalance assessment plus candidate testing.")
     add_strategy_flags(quarterly)
@@ -460,6 +477,32 @@ def run_candidate_test(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_candidate_screen_command(args: argparse.Namespace) -> int:
+    proxy_map = parse_proxy_map(args.proxy_map)
+    report = run_candidate_screen(
+        selected_strategy(args),
+        apply_proxy_map(read_prices_csv(args.prices_csv), proxy_map),
+        read_asset_universe_csv(args.asset_universe_csv),
+        benchmark_symbol=args.benchmark_symbol,
+        benchmark_weights=parse_weight_map(args.benchmark),
+        initial_value=args.initial_value,
+        annualization_periods=args.annualization,
+        risk_free_rate=args.risk_free_rate,
+        windows=parse_windows(args.windows),
+        max_candidates=args.max_candidates,
+    )
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(format_candidate_screen_markdown(report), encoding="utf-8")
+    if args.json:
+        print(json.dumps(to_jsonable(report), indent=2, sort_keys=True))
+    else:
+        print_candidate_screen(report)
+        if args.report:
+            print(f"\nWrote report: {args.report}")
+    return 0
+
+
 def run_quarterly(args: argparse.Namespace) -> int:
     strategy = selected_strategy(args)
     proxy_map = parse_proxy_map(args.proxy_map)
@@ -685,6 +728,23 @@ def parse_proxy_map(value: str) -> dict[str, str]:
             raise ValueError(f"Proxy entry must include both target and proxy, got {item!r}.")
         mapping[target_symbol] = proxy_symbol
     return mapping
+
+
+def parse_windows(value: str) -> tuple[int, ...]:
+    windows: list[int] = []
+    for item in value.split(","):
+        if not item.strip():
+            continue
+        try:
+            window = int(item.strip())
+        except ValueError as exc:
+            raise ValueError(f"Window must be an integer, got {item!r}.") from exc
+        if window <= 0:
+            raise ValueError("Windows must be positive.")
+        windows.append(window)
+    if not windows:
+        raise ValueError("At least one screen window is required.")
+    return tuple(windows)
 
 
 def parse_cash_amount(value: str) -> float:
@@ -956,6 +1016,30 @@ def print_candidate_tests(results: Any) -> None:
         )
 
 
+def print_candidate_screen(report: Any) -> None:
+    print("Candidate Screen")
+    print(f"As of: {report.as_of.isoformat() if report.as_of is not None else 'n/a'}")
+    print(f"Benchmark symbol: {report.benchmark_symbol}")
+    print()
+    print(
+        f"{'Priority':<10} {'Ticker':<8} {'For':<8} {'Role':<22} "
+        f"{'126d':>10} {'Trend':>8} {'DD':>10} {'Inc Corr':>9} {'Beta':>8} {'Sharpe':>8}"
+    )
+    for row in report.rows:
+        print(
+            f"{row.priority:<10} "
+            f"{row.ticker:<8} "
+            f"{(row.replace_for or '-'):<8} "
+            f"{row.role[:22]:<22} "
+            f"{format_signed_pct(row.return_126):>10} "
+            f"{format_trend(row.above_200_day_average):>8} "
+            f"{format_signed_pct(row.current_drawdown):>10} "
+            f"{format_ratio(row.correlation_to_incumbent):>9} "
+            f"{format_ratio(row.beta_to_benchmark):>8} "
+            f"{format_ratio(row.sharpe_delta):>8}"
+        )
+
+
 def print_quarterly_review(review: Any) -> None:
     print("Quarterly Review")
     print_monthly_assessment(review.monthly_assessment)
@@ -1113,6 +1197,43 @@ def format_quarterly_review_markdown(review: Any) -> str:
     return "\n".join(lines)
 
 
+def format_candidate_screen_markdown(report: Any) -> str:
+    lines = [
+        "# Candidate Screen",
+        "",
+        f"As of: {report.as_of.isoformat() if report.as_of is not None else 'n/a'}",
+        f"Benchmark symbol: {report.benchmark_symbol}",
+        f"Momentum windows: {', '.join(str(window) for window in report.windows)}",
+        "",
+        "## Screen Results",
+        "",
+        "| Priority | Ticker | Replace For | Role | 63d | 126d | 252d | Trend | Drawdown | Incumbent Corr | Benchmark Beta | Sharpe Delta | MDD Delta | Notes |",
+        "| --- | --- | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |",
+    ]
+    for row in report.rows:
+        lines.append(
+            f"| {row.priority} | {row.ticker} | {row.replace_for or '-'} | {row.role} | "
+            f"{format_signed_pct(row.return_63)} | {format_signed_pct(row.return_126)} | "
+            f"{format_signed_pct(row.return_252)} | {format_trend(row.above_200_day_average)} | "
+            f"{format_signed_pct(row.current_drawdown)} | {format_ratio(row.correlation_to_incumbent)} | "
+            f"{format_ratio(row.beta_to_benchmark)} | {format_ratio(row.sharpe_delta)} | "
+            f"{format_signed_pct(row.max_drawdown_delta)} | {row.notes} |"
+        )
+    lines.extend([
+        "",
+        "## Interpretation",
+        "",
+        "- `high`: candidate passed replacement math and is not in an obvious downtrend.",
+        "- `watch`: candidate has useful evidence but also tradeoffs.",
+        "- `incumbent`: current role champion; monitor against challengers.",
+        "- `monitor`: incumbent has a trend or drawdown concern.",
+        "- `reject`: candidate failed the current screen.",
+        "- `no_data`: insufficient complete price history for the screen.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
 def print_latest_rolling(label: str, rows: Any) -> None:
     if not rows:
         print(f"{label}: not enough observations")
@@ -1260,6 +1381,12 @@ def format_ratio(value: float | None) -> str:
     if value is None:
         return "n/a"
     return f"{value:,.2f}"
+
+
+def format_trend(value: bool | None) -> str:
+    if value is None:
+        return "n/a"
+    return "above" if value else "below"
 
 
 def format_signed_pct(value: float | None) -> str:

@@ -77,6 +77,37 @@ Command:
 PYTHONPATH=src python3 -m ultimate_portfolio.cli candidate-test data/cache/candidate_prices.csv examples/asset_universe.csv --proxy-map BAI=QQQ,ELFY=GRID --annualization 252 --risk-free-rate 0.04
 ```
 
+### Candidate Screen
+
+Purpose: maintain the living research bench of current champions and challengers.
+
+The candidate screen combines same-role replacement math with ticker-level diagnostics:
+
+- 63/126/252-period momentum
+- 126-period volatility-adjusted momentum
+- 200-period moving-average trend state
+- current drawdown from trailing high
+- correlation to incumbent when a replacement target exists
+- beta and correlation to the ticker-level benchmark symbol
+- replacement-test deltas for CAGR, Sharpe, and max drawdown
+
+Command:
+
+```bash
+PYTHONPATH=src python3 -m ultimate_portfolio.cli screen-candidates data/cache/candidate_prices.csv examples/asset_universe.csv --proxy-map BAI=QQQ,ELFY=GRID --benchmark-symbol QQQ --annualization 252 --risk-free-rate 0.04 --report docs/research/candidate-screen.md
+```
+
+The screen is a research triage tool. It should promote candidates to deeper review, not directly authorize trades.
+
+Future signal layers can extend this command without changing the decision workflow:
+
+- macro regime feeds from FRED for rates, inflation, yield curve, credit spreads, dollar, and commodities
+- SEC and fundamentals feeds for free-cash-flow yield, margins, debt, ROE, capex, and dividend quality
+- news/event feeds for issuer updates, earnings guidance changes, product-cycle news, regulatory changes, and ETF methodology changes
+- implementation feeds for AUM, average volume, spreads, expense ratio, and inception age
+
+These inputs should produce documented flags and notes, not automatic trades.
+
 ## Candidate Status
 
 Candidate tests classify each replacement:

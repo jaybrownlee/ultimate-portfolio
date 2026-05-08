@@ -3,6 +3,7 @@ import unittest
 
 from ultimate_portfolio.assessment import (
     AssetUniverseItem,
+    run_candidate_screen,
     run_candidate_tests,
     run_daily_check,
     run_monthly_assessment,
@@ -77,6 +78,29 @@ class AssessmentTests(unittest.TestCase):
         self.assertEqual(len(results), 2)
         self.assertIn(results[0].status, {"pass", "watch", "reject"})
         self.assertEqual(results[1].status, "no_data")
+
+    def test_candidate_screen_scores_incumbents_and_challengers(self) -> None:
+        report = run_candidate_screen(
+            DEFAULT_STRATEGY,
+            price_points_with_candidates(),
+            [
+                AssetUniverseItem("COWZ", "fcf_value_anchor", "core", "", 0.20, 0.35),
+                AssetUniverseItem("SMH", "semis_hardware", "satellite", "SPRX", 0, 0.08),
+                AssetUniverseItem("MISSING", "semis_hardware", "satellite", "SPRX", 0, 0.08),
+            ],
+            benchmark_symbol="QQQ",
+            benchmark_weights={"QQQ": 1.0},
+            annualization_periods=12,
+            windows=(1, 2),
+        )
+
+        rows = {row.ticker: row for row in report.rows}
+        self.assertEqual(report.as_of, date(2026, 3, 31))
+        self.assertEqual(rows["COWZ"].candidate_type, "incumbent")
+        self.assertEqual(rows["SMH"].replace_for, "SPRX")
+        self.assertIn(rows["SMH"].priority, {"high", "watch", "reject"})
+        self.assertIsNotNone(rows["SMH"].correlation_to_incumbent)
+        self.assertEqual(rows["MISSING"].priority, "no_data")
 
     def test_quarterly_review_forces_sweep_and_includes_checklist(self) -> None:
         review = run_quarterly_review(

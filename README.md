@@ -227,6 +227,12 @@ Run a quarterly review with candidate tests:
 PYTHONPATH=src python3 -m ultimate_portfolio.cli quarterly-review examples/positions.csv data/cache/candidate_prices.csv examples/asset_universe.csv --as-of 2026-05-07 --proxy-map BAI=QQQ,ELFY=GRID --annualization 252 --risk-free-rate 0.04 --report docs/research/quarterly-review.md
 ```
 
+Run the living candidate screen:
+
+```bash
+PYTHONPATH=src python3 -m ultimate_portfolio.cli screen-candidates data/cache/candidate_prices.csv examples/asset_universe.csv --proxy-map BAI=QQQ,ELFY=GRID --benchmark-symbol QQQ --annualization 252 --risk-free-rate 0.04 --report docs/research/candidate-screen.md
+```
+
 ## Monthly Review
 
 History CSV:

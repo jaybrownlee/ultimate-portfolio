@@ -8,9 +8,14 @@ from .research import (
     PricePoint,
     RebalanceComparison,
     RollingMetricPoint,
+    ValuePoint,
     aligned_dates,
     build_price_table,
+    calculate_performance_metrics,
+    calculate_relative_metrics,
+    correlation,
     normalize_weights,
+    periodic_returns,
     rolling_metrics,
     run_strategy_backtest,
     run_weighted_backtest,
@@ -99,6 +104,44 @@ class CandidateTestResult:
     baseline_beta: float | None
     candidate_beta: float | None
     notes: str
+
+
+@dataclass(frozen=True)
+class CandidateScreenRow:
+    ticker: str
+    role: str
+    bucket: str
+    replace_for: str
+    candidate_type: str
+    priority: str
+    latest_price_date: date | None
+    observations: int
+    total_return: float | None
+    cagr: float | None
+    sharpe_ratio: float | None
+    max_drawdown: float | None
+    current_drawdown: float | None
+    return_63: float | None
+    return_126: float | None
+    return_252: float | None
+    vol_adjusted_momentum_126: float | None
+    above_200_day_average: bool | None
+    correlation_to_incumbent: float | None
+    correlation_to_benchmark: float | None
+    beta_to_benchmark: float | None
+    replacement_status: str | None
+    cagr_delta: float | None
+    sharpe_delta: float | None
+    max_drawdown_delta: float | None
+    notes: str
+
+
+@dataclass(frozen=True)
+class CandidateScreenReport:
+    as_of: date | None
+    benchmark_symbol: str
+    windows: tuple[int, ...]
+    rows: tuple[CandidateScreenRow, ...]
 
 
 @dataclass(frozen=True)
@@ -552,6 +595,285 @@ def run_candidate_tests(
             continue
         tested.append(candidate_result(item, baseline, candidate))
     return tuple(tested)
+
+
+def run_candidate_screen(
+    strategy: HierarchicalStrategy,
+    price_points: list[PricePoint],
+    candidates: list[AssetUniverseItem],
+    *,
+    benchmark_symbol: str = "QQQ",
+    benchmark_weights: dict[str, float] | None = None,
+    initial_value: float = 100000.0,
+    annualization_periods: int = 252,
+    risk_free_rate: float = 0.0,
+    windows: tuple[int, ...] = (63, 126, 252),
+    max_candidates: int | None = None,
+) -> CandidateScreenReport:
+    if any(window <= 0 for window in windows):
+        raise ValueError("Screen windows must be positive.")
+    normalized_benchmark = benchmark_symbol.upper().strip()
+    screened_items = candidate_items_for_screen(candidates, max_candidates)
+    replacement_tests = {
+        (result.ticker, result.replace_for): result
+        for result in run_candidate_tests(
+            strategy,
+            price_points,
+            [item for item in screened_items if item.replacement_symbol],
+            benchmark_weights=benchmark_weights,
+            initial_value=initial_value,
+            annualization_periods=annualization_periods,
+            risk_free_rate=risk_free_rate,
+            max_candidates=None,
+        )
+    }
+    price_table = build_price_table(price_points)
+    rows = tuple(
+        build_candidate_screen_row(
+            price_table,
+            item,
+            benchmark_symbol=normalized_benchmark,
+            annualization_periods=annualization_periods,
+            risk_free_rate=risk_free_rate,
+            windows=windows,
+            replacement_result=replacement_tests.get((item.symbol, item.replacement_symbol)),
+        )
+        for item in screened_items
+    )
+    latest_dates = [row.latest_price_date for row in rows if row.latest_price_date is not None]
+    return CandidateScreenReport(
+        as_of=max(latest_dates) if latest_dates else None,
+        benchmark_symbol=normalized_benchmark,
+        windows=tuple(windows),
+        rows=rows,
+    )
+
+
+def candidate_items_for_screen(
+    candidates: list[AssetUniverseItem],
+    max_candidates: int | None,
+) -> list[AssetUniverseItem]:
+    if max_candidates is None:
+        return list(candidates)
+    if max_candidates < 0:
+        raise ValueError("Maximum candidates cannot be negative.")
+    incumbents = [item for item in candidates if not item.replacement_symbol]
+    challengers = [item for item in candidates if item.replacement_symbol]
+    return incumbents + challengers[:max_candidates]
+
+
+def build_candidate_screen_row(
+    price_table: dict[date, dict[str, float]],
+    item: AssetUniverseItem,
+    *,
+    benchmark_symbol: str,
+    annualization_periods: int,
+    risk_free_rate: float,
+    windows: tuple[int, ...],
+    replacement_result: CandidateTestResult | None,
+) -> CandidateScreenRow:
+    symbol = item.symbol
+    candidate_type = "incumbent" if not item.replacement_symbol else "challenger"
+    valid_dates = [day for day in sorted(price_table) if symbol in price_table[day]]
+    if len(valid_dates) < 2:
+        return no_data_screen_row(item, candidate_type, replacement_result, "Insufficient price history for screening.")
+
+    values = tuple(ValuePoint(day, price_table[day][symbol]) for day in valid_dates)
+    metrics = calculate_performance_metrics(
+        values,
+        annualization_periods=annualization_periods,
+        risk_free_rate=risk_free_rate,
+    )
+    prices = [point.value for point in values]
+    window_returns = {window: window_return(values, window) for window in windows}
+    current_drawdown = (prices[-1] / max(prices)) - 1.0
+    vol_adjusted_126 = vol_adjusted_momentum(values, 126, annualization_periods)
+    above_200 = above_moving_average(values, 200)
+    incumbent_corr = paired_return_correlation(price_table, symbol, item.replacement_symbol)
+    benchmark_relative = paired_relative_metrics(price_table, symbol, benchmark_symbol, annualization_periods)
+    priority = classify_screen_priority(
+        candidate_type=candidate_type,
+        replacement_result=replacement_result,
+        return_126=window_returns.get(126),
+        above_200=above_200,
+        current_drawdown=current_drawdown,
+    )
+    return CandidateScreenRow(
+        ticker=symbol,
+        role=item.role,
+        bucket=item.bucket,
+        replace_for=item.replacement_symbol,
+        candidate_type=candidate_type,
+        priority=priority,
+        latest_price_date=values[-1].observation_date,
+        observations=len(values),
+        total_return=metrics.total_return,
+        cagr=metrics.cagr,
+        sharpe_ratio=metrics.sharpe_ratio,
+        max_drawdown=metrics.max_drawdown,
+        current_drawdown=current_drawdown,
+        return_63=window_returns.get(63),
+        return_126=window_returns.get(126),
+        return_252=window_returns.get(252),
+        vol_adjusted_momentum_126=vol_adjusted_126,
+        above_200_day_average=above_200,
+        correlation_to_incumbent=incumbent_corr,
+        correlation_to_benchmark=None if benchmark_relative is None else benchmark_relative.correlation,
+        beta_to_benchmark=None if benchmark_relative is None else benchmark_relative.beta,
+        replacement_status=None if replacement_result is None else replacement_result.status,
+        cagr_delta=None if replacement_result is None else replacement_result.cagr_delta,
+        sharpe_delta=None if replacement_result is None else replacement_result.sharpe_delta,
+        max_drawdown_delta=None if replacement_result is None else replacement_result.max_drawdown_delta,
+        notes=screen_notes(candidate_type, replacement_result, item.notes),
+    )
+
+
+def no_data_screen_row(
+    item: AssetUniverseItem,
+    candidate_type: str,
+    replacement_result: CandidateTestResult | None,
+    notes: str,
+) -> CandidateScreenRow:
+    return CandidateScreenRow(
+        ticker=item.symbol,
+        role=item.role,
+        bucket=item.bucket,
+        replace_for=item.replacement_symbol,
+        candidate_type=candidate_type,
+        priority="no_data",
+        latest_price_date=None,
+        observations=0,
+        total_return=None,
+        cagr=None,
+        sharpe_ratio=None,
+        max_drawdown=None,
+        current_drawdown=None,
+        return_63=None,
+        return_126=None,
+        return_252=None,
+        vol_adjusted_momentum_126=None,
+        above_200_day_average=None,
+        correlation_to_incumbent=None,
+        correlation_to_benchmark=None,
+        beta_to_benchmark=None,
+        replacement_status=None if replacement_result is None else replacement_result.status,
+        cagr_delta=None if replacement_result is None else replacement_result.cagr_delta,
+        sharpe_delta=None if replacement_result is None else replacement_result.sharpe_delta,
+        max_drawdown_delta=None if replacement_result is None else replacement_result.max_drawdown_delta,
+        notes=notes,
+    )
+
+
+def window_return(values: tuple[ValuePoint, ...], window: int) -> float | None:
+    if len(values) <= window:
+        return None
+    return (values[-1].value / values[-1 - window].value) - 1.0
+
+
+def vol_adjusted_momentum(
+    values: tuple[ValuePoint, ...],
+    window: int,
+    annualization_periods: int,
+) -> float | None:
+    if len(values) <= window:
+        return None
+    returns = periodic_returns([point.value for point in values[-window - 1:]])
+    volatility = sample_volatility(returns, annualization_periods)
+    if volatility <= 0:
+        return None
+    return ((values[-1].value / values[-1 - window].value) - 1.0) / volatility
+
+
+def sample_volatility(returns: list[float], annualization_periods: int) -> float:
+    if len(returns) < 2:
+        return 0.0
+    mean = sum(returns) / len(returns)
+    variance = sum((item - mean) ** 2 for item in returns) / (len(returns) - 1)
+    return variance ** 0.5 * (annualization_periods ** 0.5)
+
+
+def above_moving_average(values: tuple[ValuePoint, ...], window: int) -> bool | None:
+    if len(values) < window:
+        return None
+    average = sum(point.value for point in values[-window:]) / window
+    return values[-1].value > average
+
+
+def paired_return_correlation(
+    price_table: dict[date, dict[str, float]],
+    left_symbol: str,
+    right_symbol: str,
+) -> float | None:
+    if not right_symbol:
+        return None
+    valid_dates, _ = aligned_dates(price_table, {left_symbol, right_symbol})
+    if len(valid_dates) < 3:
+        return None
+    left_returns = [
+        (price_table[current][left_symbol] / price_table[previous][left_symbol]) - 1.0
+        for previous, current in zip(valid_dates, valid_dates[1:])
+    ]
+    right_returns = [
+        (price_table[current][right_symbol] / price_table[previous][right_symbol]) - 1.0
+        for previous, current in zip(valid_dates, valid_dates[1:])
+    ]
+    return correlation(left_returns, right_returns)
+
+
+def paired_relative_metrics(
+    price_table: dict[date, dict[str, float]],
+    symbol: str,
+    benchmark_symbol: str,
+    annualization_periods: int,
+):
+    if not benchmark_symbol:
+        return None
+    valid_dates, _ = aligned_dates(price_table, {symbol, benchmark_symbol})
+    if len(valid_dates) < 3:
+        return None
+    symbol_values = tuple(ValuePoint(day, price_table[day][symbol]) for day in valid_dates)
+    benchmark_values = tuple(ValuePoint(day, price_table[day][benchmark_symbol]) for day in valid_dates)
+    return calculate_relative_metrics(symbol_values, benchmark_values, annualization_periods=annualization_periods)
+
+
+def classify_screen_priority(
+    *,
+    candidate_type: str,
+    replacement_result: CandidateTestResult | None,
+    return_126: float | None,
+    above_200: bool | None,
+    current_drawdown: float,
+) -> str:
+    if candidate_type == "incumbent":
+        if current_drawdown <= -0.20 or above_200 is False:
+            return "monitor"
+        return "incumbent"
+    if replacement_result is None or replacement_result.status == "no_data":
+        return "no_data"
+    trend_ok = above_200 is not False and (return_126 is None or return_126 >= 0)
+    if replacement_result.status == "pass" and trend_ok and current_drawdown > -0.20:
+        return "high"
+    if replacement_result.status in {"pass", "watch"}:
+        return "watch"
+    return "reject"
+
+
+def screen_notes(
+    candidate_type: str,
+    replacement_result: CandidateTestResult | None,
+    base_notes: str,
+) -> str:
+    if candidate_type == "incumbent":
+        return base_notes or "Current role champion; monitor against challengers."
+    if replacement_result is None:
+        return base_notes or "Candidate needs a same-role replacement test."
+    if replacement_result.status == "pass":
+        return "Candidate passed replacement math; require role, liquidity, and persistence review."
+    if replacement_result.status == "watch":
+        return "Candidate improved at least one dimension but has tradeoffs."
+    if replacement_result.status == "reject":
+        return "Candidate failed the current replacement screen."
+    return replacement_result.notes
 
 
 def complete_price_points_for_symbols(price_points: list[PricePoint], required_symbols: set[str]) -> list[PricePoint]:
