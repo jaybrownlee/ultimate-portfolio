@@ -1,0 +1,39 @@
+ticker,role,bucket,replace_for,allowed_min_weight,allowed_max_weight,notes
+COWZ,fcf_value_anchor,core,,0.20,0.35,Current free-cash-flow equity anchor
+VFLO,fcf_value_anchor,core,COWZ,0,0.28,Free-cash-flow/value alternative
+CALF,fcf_value_anchor,core,COWZ,0,0.28,Small-cap cash-flow alternative; higher volatility
+DSTL,fcf_value_anchor,core,COWZ,0,0.28,Distilled value/quality alternative
+WMT,ai_adopter,core,,0.00,0.05,Current AI adopter
+JPM,ai_adopter,core,,0.00,0.05,Current AI adopter
+DE,ai_adopter,core,,0.00,0.05,Current AI adopter
+CAT,ai_adopter,core,DE,0,0.04,Industrial adopter candidate
+HON,ai_adopter,core,DE,0,0.04,Automation and industrial software adopter candidate
+ETN,ai_adopter,core,DE,0,0.04,Electrical infrastructure adopter candidate
+PWR,ai_adopter,core,DE,0,0.04,Grid and power services adopter candidate
+DBMF,managed_futures,core,,0.10,0.20,Current managed futures hedge
+KMLM,managed_futures,core,DBMF,0,0.20,Managed futures alternative
+CTA,managed_futures,core,DBMF,0,0.20,Managed futures alternative
+SGOV,t_bill_liquidity,core,,0.05,0.12,Current T-bill liquidity sleeve
+BIL,t_bill_liquidity,core,SGOV,0,0.10,T-bill ETF alternative
+USFR,t_bill_liquidity,core,SGOV,0,0.10,Floating-rate Treasury alternative
+TLT,duration_hedge,core,,0.05,0.12,Current long-duration Treasury hedge
+EDV,duration_hedge,core,TLT,0,0.10,Extended-duration Treasury alternative
+GOVZ,duration_hedge,core,TLT,0,0.10,Zero-coupon Treasury alternative
+IEF,duration_hedge,core,TLT,0,0.10,Intermediate-duration Treasury alternative
+GLDM,stagflation_overlay,core,SGOV,0,0.04,Gold sleeve candidate when stagflation risk rises
+SPRX,semis_hardware,satellite,,0.04,0.08,Current active semiconductor and hardware exposure
+SMH,semis_hardware,satellite,SPRX,0,0.08,Semiconductor benchmark candidate
+SOXX,semis_hardware,satellite,SPRX,0,0.08,Semiconductor benchmark candidate
+XSD,semis_hardware,satellite,SPRX,0,0.08,Equal-weight semiconductor candidate
+ARKQ,robotics_embodied_ai,satellite,,0.03,0.07,Current robotics and autonomous tech exposure
+BOTZ,robotics_embodied_ai,satellite,ARKQ,0,0.07,Robotics ETF candidate
+ROBO,robotics_embodied_ai,satellite,ARKQ,0,0.07,Robotics ETF candidate
+IRBO,robotics_embodied_ai,satellite,ARKQ,0,0.07,AI/robotics ETF candidate
+ELFY,power_grid_cooling,satellite,,0.01,0.03,Current electrification/power infrastructure exposure
+GRID,power_grid_cooling,satellite,ELFY,0,0.03,Longer-history grid infrastructure proxy/candidate
+PAVE,power_grid_cooling,satellite,ELFY,0,0.03,Infrastructure ETF candidate
+IFRA,power_grid_cooling,satellite,ELFY,0,0.03,US infrastructure ETF candidate
+AIRR,power_grid_cooling,satellite,ELFY,0,0.03,Industrial renaissance ETF candidate
+BAI,broad_ai_stack,satellite,,0.01,0.02,Current broad AI stack exposure
+AIQ,broad_ai_stack,satellite,BAI,0,0.02,Broad AI ETF candidate
+QQQM,broad_ai_stack,satellite,BAI,0,0.02,Nasdaq 100 lower-cost proxy candidate

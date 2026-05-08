@@ -74,3 +74,5 @@ Actual-current backtest = better for live implementation monitoring.
 ```
 
 See [research-methodology.md](research-methodology.md) for the full research discipline.
+
+See [assessment-process.md](assessment-process.md) for the monthly and quarterly operating workflow.

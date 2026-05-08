@@ -9,6 +9,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .assessment import (
+    AssetUniverseItem,
+    run_candidate_tests,
+    run_monthly_assessment,
+    run_quarterly_review,
+)
 from .data import download_yahoo_chart_prices, download_yfinance_prices
 from .dca import build_dca_schedule
 from .research import (
@@ -129,6 +135,51 @@ def build_parser() -> argparse.ArgumentParser:
     suite.add_argument("--report", type=Path, help="Optional Markdown report path.")
     suite.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     suite.set_defaults(func=run_research_suite)
+
+    monthly = subparsers.add_parser("monthly-assessment", help="Run the monitoring-first monthly portfolio assessment.")
+    add_strategy_flags(monthly)
+    monthly.add_argument("positions_csv", type=Path, help="Current holdings CSV.")
+    monthly.add_argument("prices_csv", type=Path, help="Long-form price CSV with strategy and benchmark prices.")
+    monthly.add_argument("--as-of", type=parse_date, default=date.today(), help="Assessment date, YYYY-MM-DD.")
+    monthly.add_argument("--peak-value", type=float, help="Peak account value for uncle-point monitoring.")
+    monthly.add_argument("--initial-value", type=float, default=100000, help="Backtest starting value.")
+    monthly.add_argument("--annualization", type=int, default=252, help="Periods per year, usually 252 for daily data.")
+    monthly.add_argument("--risk-free-rate", type=float, default=0.0, help="Annual risk-free rate.")
+    monthly.add_argument("--benchmark", default="VBIAX:0.8,QQQ:0.2", help="Comma-separated benchmark weights.")
+    monthly.add_argument("--proxy-map", default="", help="Comma-separated target=proxy mappings.")
+    monthly.add_argument("--report", type=Path, help="Optional Markdown report path.")
+    monthly.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    monthly.set_defaults(func=run_monthly)
+
+    candidate = subparsers.add_parser("candidate-test", help="Test same-role replacement candidates from an asset universe CSV.")
+    add_strategy_flags(candidate)
+    candidate.add_argument("prices_csv", type=Path, help="Long-form price CSV.")
+    candidate.add_argument("asset_universe_csv", type=Path, help="Asset universe CSV.")
+    candidate.add_argument("--initial-value", type=float, default=100000, help="Backtest starting value.")
+    candidate.add_argument("--annualization", type=int, default=252, help="Periods per year.")
+    candidate.add_argument("--risk-free-rate", type=float, default=0.0, help="Annual risk-free rate.")
+    candidate.add_argument("--benchmark", default="VBIAX:0.8,QQQ:0.2", help="Comma-separated benchmark weights.")
+    candidate.add_argument("--proxy-map", default="", help="Comma-separated target=proxy mappings.")
+    candidate.add_argument("--max-candidates", type=int, default=30, help="Maximum candidate rows to test.")
+    candidate.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    candidate.set_defaults(func=run_candidate_test)
+
+    quarterly = subparsers.add_parser("quarterly-review", help="Run quarterly rebalance assessment plus candidate testing.")
+    add_strategy_flags(quarterly)
+    quarterly.add_argument("positions_csv", type=Path, help="Current holdings CSV.")
+    quarterly.add_argument("prices_csv", type=Path, help="Long-form price CSV.")
+    quarterly.add_argument("asset_universe_csv", type=Path, help="Asset universe CSV.")
+    quarterly.add_argument("--as-of", type=parse_date, default=date.today(), help="Review date, YYYY-MM-DD.")
+    quarterly.add_argument("--peak-value", type=float, help="Peak account value for uncle-point monitoring.")
+    quarterly.add_argument("--initial-value", type=float, default=100000, help="Backtest starting value.")
+    quarterly.add_argument("--annualization", type=int, default=252, help="Periods per year.")
+    quarterly.add_argument("--risk-free-rate", type=float, default=0.0, help="Annual risk-free rate.")
+    quarterly.add_argument("--benchmark", default="VBIAX:0.8,QQQ:0.2", help="Comma-separated benchmark weights.")
+    quarterly.add_argument("--proxy-map", default="", help="Comma-separated target=proxy mappings.")
+    quarterly.add_argument("--max-candidates", type=int, default=30, help="Maximum candidate rows to test.")
+    quarterly.add_argument("--report", type=Path, help="Optional Markdown report path.")
+    quarterly.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    quarterly.set_defaults(func=run_quarterly)
 
     download = subparsers.add_parser("download-prices", help="Download adjusted close prices into backtest CSV format.")
     add_strategy_flags(download)
@@ -320,6 +371,81 @@ def run_research_suite(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_monthly(args: argparse.Namespace) -> int:
+    strategy = selected_strategy(args)
+    proxy_map = parse_proxy_map(args.proxy_map)
+    assessment = run_monthly_assessment(
+        strategy,
+        read_positions_csv(args.positions_csv),
+        apply_proxy_map(read_prices_csv(args.prices_csv), proxy_map),
+        args.as_of,
+        peak_value=args.peak_value,
+        benchmark_weights=parse_weight_map(args.benchmark),
+        initial_value=args.initial_value,
+        annualization_periods=args.annualization,
+        risk_free_rate=args.risk_free_rate,
+        mode="proxy_regime" if proxy_map else "actual_current_portfolio",
+    )
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(format_monthly_assessment_markdown(assessment), encoding="utf-8")
+    if args.json:
+        print(json.dumps(to_jsonable(assessment), indent=2, sort_keys=True))
+    else:
+        print_monthly_assessment(assessment)
+        if args.report:
+            print(f"\nWrote report: {args.report}")
+    return 0
+
+
+def run_candidate_test(args: argparse.Namespace) -> int:
+    proxy_map = parse_proxy_map(args.proxy_map)
+    results = run_candidate_tests(
+        selected_strategy(args),
+        apply_proxy_map(read_prices_csv(args.prices_csv), proxy_map),
+        read_asset_universe_csv(args.asset_universe_csv),
+        benchmark_weights=parse_weight_map(args.benchmark),
+        initial_value=args.initial_value,
+        annualization_periods=args.annualization,
+        risk_free_rate=args.risk_free_rate,
+        max_candidates=args.max_candidates,
+    )
+    if args.json:
+        print(json.dumps(to_jsonable(results), indent=2, sort_keys=True))
+    else:
+        print_candidate_tests(results)
+    return 0
+
+
+def run_quarterly(args: argparse.Namespace) -> int:
+    strategy = selected_strategy(args)
+    proxy_map = parse_proxy_map(args.proxy_map)
+    review = run_quarterly_review(
+        strategy,
+        read_positions_csv(args.positions_csv),
+        apply_proxy_map(read_prices_csv(args.prices_csv), proxy_map),
+        read_asset_universe_csv(args.asset_universe_csv),
+        args.as_of,
+        peak_value=args.peak_value,
+        benchmark_weights=parse_weight_map(args.benchmark),
+        initial_value=args.initial_value,
+        annualization_periods=args.annualization,
+        risk_free_rate=args.risk_free_rate,
+        mode="proxy_regime" if proxy_map else "actual_current_portfolio",
+        max_candidates=args.max_candidates,
+    )
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(format_quarterly_review_markdown(review), encoding="utf-8")
+    if args.json:
+        print(json.dumps(to_jsonable(review), indent=2, sort_keys=True))
+    else:
+        print_quarterly_review(review)
+        if args.report:
+            print(f"\nWrote report: {args.report}")
+    return 0
+
+
 def run_download_prices(args: argparse.Namespace) -> int:
     strategy = selected_strategy(args)
     if args.tickers:
@@ -451,6 +577,28 @@ def read_adopter_metrics_csv(path: Path) -> list[AdopterMetrics]:
                 )
             )
     return metrics
+
+
+def read_asset_universe_csv(path: Path) -> list[AssetUniverseItem]:
+    items: list[AssetUniverseItem] = []
+    with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None:
+            raise ValueError("Asset universe CSV must include headers.")
+        for row_number, row in enumerate(reader, start=2):
+            normalized = normalize_row(row)
+            items.append(
+                AssetUniverseItem(
+                    ticker=required(normalized, "ticker", row_number),
+                    role=required(normalized, "role", row_number),
+                    bucket=required(normalized, "bucket", row_number),
+                    replace_for=normalized.get("replace_for", ""),
+                    allowed_min_weight=parse_optional_float(normalized.get("allowed_min_weight"), f"Row {row_number}: allowed_min_weight") or 0.0,
+                    allowed_max_weight=parse_optional_float(normalized.get("allowed_max_weight"), f"Row {row_number}: allowed_max_weight") or 0.0,
+                    notes=normalized.get("notes", ""),
+                )
+            )
+    return items
 
 
 def required(row: dict[str, str], key: str, row_number: int) -> str:
@@ -695,6 +843,161 @@ def print_research_suite_report(suite: dict[str, Any]) -> None:
             f"{format_pct(row.probability_of_loss):>10} "
             f"{format_signed_pct(row.median_max_drawdown):>10}"
         )
+
+
+def print_monthly_assessment(assessment: Any) -> None:
+    metrics = assessment.backtest.portfolio_metrics
+    print("Monthly Assessment")
+    print(f"As of: {assessment.as_of.isoformat()}")
+    print(f"Recommended action: {assessment.recommended_action}")
+    print(
+        "Portfolio: "
+        f"return {format_signed_pct(metrics.total_return)}, "
+        f"Sharpe {format_ratio(metrics.sharpe_ratio)}, "
+        f"MDD {format_signed_pct(metrics.max_drawdown)}"
+    )
+    print(
+        "Satellite: "
+        f"{format_pct(assessment.analysis.satellite_weight)} "
+        f"(drift {format_signed_pct(assessment.analysis.satellite_drift)})"
+    )
+    if assessment.satellite_relative_strength_63 is not None:
+        print(f"Satellite vs QQQ 63-period relative strength: {format_signed_pct(assessment.satellite_relative_strength_63)}")
+    print()
+    print("Flags")
+    for flag in assessment.flags:
+        print(f"{flag.severity.upper():<6} {flag.topic:<28} {flag.message}")
+
+
+def print_candidate_tests(results: Any) -> None:
+    print("Candidate Tests")
+    print(f"{'Status':<8} {'Ticker':<8} {'For':<8} {'Role':<22} {'CAGR':>10} {'Sharpe':>10} {'MDD':>10}")
+    for row in results:
+        print(
+            f"{row.status:<8} "
+            f"{row.ticker:<8} "
+            f"{row.replace_for:<8} "
+            f"{row.role[:22]:<22} "
+            f"{format_signed_pct(row.cagr_delta):>10} "
+            f"{format_ratio(row.sharpe_delta):>10} "
+            f"{format_signed_pct(row.max_drawdown_delta):>10}"
+        )
+
+
+def print_quarterly_review(review: Any) -> None:
+    print("Quarterly Review")
+    print_monthly_assessment(review.monthly_assessment)
+    print()
+    print("Rebalance Comparison")
+    print(f"{'Freq':<10} {'Return':>10} {'Sharpe':>8} {'MDD':>10} {'Active':>10}")
+    for row in review.rebalance_comparisons:
+        print(
+            f"{row.frequency:<10} "
+            f"{format_signed_pct(row.total_return):>10} "
+            f"{format_ratio(row.sharpe_ratio):>8} "
+            f"{format_signed_pct(row.max_drawdown):>10} "
+            f"{format_signed_pct(row.active_return):>10}"
+        )
+    print()
+    print_candidate_tests(review.candidate_tests)
+    print()
+    print("Decision Checklist")
+    for item in review.decision_checklist:
+        print(f"- {item}")
+
+
+def format_monthly_assessment_markdown(assessment: Any) -> str:
+    metrics = assessment.backtest.portfolio_metrics
+    lines = [
+        "# Monthly Portfolio Assessment",
+        "",
+        f"As of: {assessment.as_of.isoformat()}",
+        f"Mode: {assessment.backtest.mode}",
+        f"Recommended action: {assessment.recommended_action}",
+        "",
+        "## Recommended Target Portfolio",
+        "",
+        "| Bucket | Ticker | Strategic Role | Bucket Target | Portfolio Target | Target Value |",
+        "| --- | --- | --- | ---: | ---: | ---: |",
+    ]
+    for holding in assessment.recommended_portfolio:
+        target_value = assessment.analysis.total_value * holding.portfolio_weight
+        lines.append(
+            f"| {holding.bucket} | {holding.ticker} | {holding.role} | "
+            f"{format_pct(holding.bucket_weight)} | {format_pct(holding.portfolio_weight)} | "
+            f"{format_money(target_value)} |"
+        )
+    lines.extend([
+        "",
+        "## Portfolio Snapshot",
+        "",
+        "| Metric | Result |",
+        "| --- | ---: |",
+        f"| Total return | {format_signed_pct(metrics.total_return)} |",
+        f"| CAGR | {format_signed_pct(metrics.cagr)} |",
+        f"| Volatility | {format_pct(metrics.annualized_volatility)} |",
+        f"| Sharpe | {format_ratio(metrics.sharpe_ratio)} |",
+        f"| Max drawdown | {format_signed_pct(metrics.max_drawdown)} |",
+        f"| Satellite weight | {format_pct(assessment.analysis.satellite_weight)} |",
+        f"| Satellite drift | {format_signed_pct(assessment.analysis.satellite_drift)} |",
+        f"| Satellite vs QQQ 63-period RS | {format_signed_pct(assessment.satellite_relative_strength_63)} |",
+        "",
+        "## Flags",
+        "",
+        "| Severity | Topic | Message | Suggested Action |",
+        "| --- | --- | --- | --- |",
+    ])
+    for flag in assessment.flags:
+        lines.append(f"| {flag.severity} | {flag.topic} | {flag.message} | {flag.suggested_action} |")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def format_quarterly_review_markdown(review: Any) -> str:
+    monthly_markdown = format_monthly_assessment_markdown(review.monthly_assessment).replace(
+        "# Monthly Portfolio Assessment",
+        "## Monthly Assessment",
+        1,
+    )
+    lines = [
+        "# Quarterly Portfolio Review",
+        "",
+        f"As of: {review.as_of.isoformat()}",
+        "",
+        monthly_markdown,
+        "## Rebalance Comparison",
+        "",
+        "| Frequency | Return | CAGR | Sharpe | Max Drawdown | Active | IR |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for row in review.rebalance_comparisons:
+        lines.append(
+            f"| {row.frequency} | {format_signed_pct(row.total_return)} | {format_signed_pct(row.cagr)} | "
+            f"{format_ratio(row.sharpe_ratio)} | {format_signed_pct(row.max_drawdown)} | "
+            f"{format_signed_pct(row.active_return)} | {format_ratio(row.information_ratio)} |"
+        )
+    lines.extend([
+        "",
+        "## Candidate Tests",
+        "",
+        "| Status | Ticker | Replace For | Role | CAGR Delta | Sharpe Delta | Max Drawdown Delta | Notes |",
+        "| --- | --- | --- | --- | ---: | ---: | ---: | --- |",
+    ])
+    for row in review.candidate_tests:
+        lines.append(
+            f"| {row.status} | {row.ticker} | {row.replace_for} | {row.role} | "
+            f"{format_signed_pct(row.cagr_delta)} | {format_ratio(row.sharpe_delta)} | "
+            f"{format_signed_pct(row.max_drawdown_delta)} | {row.notes} |"
+        )
+    lines.extend([
+        "",
+        "## Decision Checklist",
+        "",
+    ])
+    for item in review.decision_checklist:
+        lines.append(f"- [ ] {item}")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def print_latest_rolling(label: str, rows: Any) -> None:

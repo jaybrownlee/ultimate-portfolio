@@ -204,6 +204,22 @@ Current generated reports:
 - [docs/research/2026-05-08-research-suite.md](docs/research/2026-05-08-research-suite.md)
 - [docs/research/2026-05-08-proxy-regime-suite.md](docs/research/2026-05-08-proxy-regime-suite.md)
 
+## Assessment Process
+
+The monthly and quarterly operating process is documented in [docs/assessment-process.md](docs/assessment-process.md).
+
+Run a monthly monitoring report:
+
+```bash
+PYTHONPATH=src python3 -m ultimate_portfolio.cli monthly-assessment examples/positions.csv data/cache/current_prices.csv --as-of 2026-05-07 --annualization 252 --risk-free-rate 0.04 --report docs/research/monthly-assessment.md
+```
+
+Run a quarterly review with candidate tests:
+
+```bash
+PYTHONPATH=src python3 -m ultimate_portfolio.cli quarterly-review examples/positions.csv data/cache/candidate_prices.csv examples/asset_universe.csv --as-of 2026-05-07 --proxy-map BAI=QQQ,ELFY=GRID --annualization 252 --risk-free-rate 0.04 --report docs/research/quarterly-review.md
+```
+
 ## Monthly Review
 
 History CSV:
